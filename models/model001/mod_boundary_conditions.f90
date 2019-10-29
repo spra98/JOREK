@@ -95,6 +95,7 @@ contains
     do loop = 1, loop_nbr
        if (loop == 2)  then
           only_count = .false.
+#ifdef USE_MURGE
           write (*,*) my_id, ":: Murge Boundary Assembly phase :: ", cnt, " entries"
           if (.not. solve_only) then
              CALL MURGE_ASSEMBLYBEGIN( murge_id, murge_global_n, cnt,              &
@@ -106,6 +107,12 @@ contains
                   &                    MURGE_ASSEMBLY_OVW, MURGE_ASSEMBLY_OVW,          &
                   &                    MURGE_ASSEMBLY_FOOL, murge_sym, ierr)
           end if
+          cnt      = 0
+          cnt_prod = 0
+#else
+          print *, "Binary built without murge"
+          call abort()
+#endif
        end if
 
        do i=1, n_local_elms
@@ -254,12 +261,17 @@ contains
           enddo
        enddo
        if (loop == 2) then
+#ifdef USE_MURGE
           if (.not. solve_only) then
              CALL MURGE_ASSEMBLYEND(murge_id, ierr)
           end if
           if (gmres) then
              CALL MURGE_ASSEMBLYEND(murge_id_prod, ierr)
           end if
+#else
+          print *, "Binary built without murge"
+          call abort()
+#endif
        end if
     end do
     return
