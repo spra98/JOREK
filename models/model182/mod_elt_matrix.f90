@@ -35,7 +35,7 @@ real*8     :: wst,  xjac, xjac_x, xjac_y, xjac_s, xjac_t, BigR, r2, phi
 real*8     :: current_source(n_gauss,n_gauss),particle_source(n_gauss,n_gauss),heat_source(n_gauss,n_gauss)
 real*8     :: R_axis, Z_axis, psi_axis, psi_bnd, R_xpoint(2), Z_xpoint(2), dj_dpsi, dj_dz
 real*8     :: psi_norm, reta
-real*8     :: rhs_ij_1, rhs_ij_2, rhs_ij_3, rhs_ij_4, rhs_ij_5, rhs_ij_6, rhs_cum_2
+real*8     :: rhs_ij_1, rhs_ij_2, rhs_ij_3, rhs_ij_4, rhs_ij_5, rhs_ij_6
 real*8     :: delta_u_x, delta_u_y
 
 real*8     :: amat_11, amat_12, amat_13, amat_16, amat_21, amat_22, amat_23, amat_24, amat_25, amat_26, amat_33, amat_31
@@ -177,8 +177,6 @@ end if
 do ms=1, n_gauss
 
  do mt=1, n_gauss
-
-   rhs_cum_2 = 0.d0
    
    wst = wgauss(ms)*wgauss(mt)
 
@@ -377,8 +375,6 @@ do ms=1, n_gauss
            RHS(ij4) = RHS(ij4) + rhs_ij_4*wst
            RHS(ij5) = RHS(ij5) + rhs_ij_5*wst
            RHS(ij6) = RHS(ij6) + rhs_ij_6*wst
-           
-           rhs_cum_2 = rhs_cum_2 + rhs_ij_2
 
            do k=1,n_vertex_max
 
@@ -501,10 +497,10 @@ do ms=1, n_gauss
 
      enddo
      
-     write(filename,'(A,I5.5)') "rhs",index_now
-     open(20,file=filename,action="write",status="unknown",position="append")
-     write(20,'(E14.6,A1,E14.6,A1,E14.6)') x_g(ms,mt), " ", y_g(ms,mt), " ", rhs_cum_2
-     close(20)
+!     write(filename,'(A,I5.5)') "rhs",index_now
+!     open(20,file=filename,action="write",status="unknown",position="append")
+!     write(20,'(E14.6,A1,E14.6,A1,E14.6)') x_g(ms,mt), " ", y_g(ms,mt), " ", rhs_cum_2
+!     close(20)
      
    enddo
 
