@@ -162,7 +162,7 @@ rho_part    = 1.195d19 !(corrected value to obtain density=1.441e17 (as in bench
 ! tstep_keep        = tstep
 
 ! selecting physics (should be done in input file)
-use_puffing       = .true. !.false. 
+use_puffing       = .false. !.false. 
 use_cx            = .true. !.true.
 use_ionisation    = .true. !.false.!.false.
 use_sputtering    = .true. !.false. !false
@@ -675,6 +675,16 @@ type is (particle_kinetic_leapfrog)
 
           endif ! cx_ran
 	  endif ! use_cx
+	  
+	  if (isnan(ion_source * ion_energy + cx_source * cx_energy - line_rad_energy)) then
+		write(*,*) "ion_energy", ion_energy
+		write(*,*) "cx_energy", cx_energy
+		write(*,*) "line_rad_energy", line_rad_energy
+		particle_tmp%i_elm  = 0
+		CYCLE !< don't feed this particle into the feedback
+		
+	  endif
+	  
 	  
 	  ! feedback from each particle at each timestep
 	  energy_source       = ion_source * ion_energy + cx_source * cx_energy - line_rad_energy
