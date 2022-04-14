@@ -930,7 +930,7 @@ do ife = 1, size(rec_rate_local,1) ! loop over all local elements
 		!$ i_rng = omp_get_thread_num()+1
 		!if (rec_rate_local(ife) / real(particles_per_element)* central_density* 1.d20 .le. 1.d7) cycle
 	   
-		k = ife +(mp-1)* size(rec_rate_local)!< every OMP thread gets different values
+		k = ife +(mp-1)* size(rec_rate_local,1)!< every OMP thread gets different values
 		!< every MPI process has it's own list of i_free.
 	   
 
