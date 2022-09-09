@@ -192,3 +192,4 @@ eqdsk2jorek: LIBS+=$(LIBDIERCKX)
 # Is this used by anyone? Otherwise we could remove it
 # It is not updated to this format yet.
 -include forcheck.mk
+# DO NOT DELETE
