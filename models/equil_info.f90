@@ -345,6 +345,10 @@ module equil_info
     R2 = R_axis + 0.25d0*(R1-R_axis)
     Z2 = Z_axis + 0.25d0*(Z1-Z_axis)
     call find_RZ(node_list, element_list, R2, Z2, R_out, Z_out, i_elm_out, s_out, t_out, ifail)    
+    if (i_elm_out .eq. 0) then
+      write(*,*) 'Warning - changing i_elm_out index'
+      i_elm_out = 1
+    endif
     call interp(node_list, element_list, i_elm_out, 1, 1, s_out, t_out, P, P_s, P_t, P_st, P_ss, P_tt)
 
     ! --- Decide whether the axis is a minimum of psi

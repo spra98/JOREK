@@ -54,35 +54,35 @@ module mod_equations
   type(algexpr), parameter, private :: T_i        = algexpr(basic=.true.,var=2*n_var+2)
   type(algexpr), parameter, private :: T_e        = algexpr(basic=.true.,var=2*n_var+2)
   ! Other quantities
-  type(algexpr), parameter, private :: chi        = algexpr(basic=.true.,var=15)
-  type(algexpr), parameter, private :: R          = algexpr(basic=.true.,var=16)
-  type(algexpr), parameter, private :: D_perp     = algexpr(basic=.true.,var=17)
-  type(algexpr), parameter, private :: S_rho      = algexpr(basic=.true.,var=18)
-  type(algexpr), parameter, private :: S_j        = algexpr(basic=.true.,var=19)
-  type(algexpr), parameter, private :: eta        = algexpr(basic=.true.,var=20)
-  type(algexpr), parameter, private :: deta_dT    = algexpr(basic=.true.,var=21)
-  type(algexpr), parameter, private :: visco      = algexpr(basic=.true.,var=22)
-  type(algexpr), parameter, private :: dvisco_dT  = algexpr(basic=.true.,var=23)
-  type(algexpr), parameter, private :: k_perp     = algexpr(basic=.true.,var=24)
-  type(algexpr), parameter, private :: k_perp_i   = algexpr(basic=.true.,var=25)
-  type(algexpr), parameter, private :: k_perp_e   = algexpr(basic=.true.,var=26)
-  type(algexpr), parameter, private :: S_e        = algexpr(basic=.true.,var=27)
-  type(algexpr), parameter, private :: S_e_i      = algexpr(basic=.true.,var=28)
-  type(algexpr), parameter, private :: S_e_e      = algexpr(basic=.true.,var=29)
-  type(algexpr), parameter, private :: k_par      = algexpr(basic=.true.,var=30) 
-  type(algexpr), parameter, private :: k_par_i    = algexpr(basic=.true.,var=31)
-  type(algexpr), parameter, private :: k_par_e    = algexpr(basic=.true.,var=32)
-  type(algexpr), parameter, private :: dk_par_dT  = algexpr(basic=.true.,var=33)
-  type(algexpr), parameter, private :: dk_par_dT_i= algexpr(basic=.true.,var=34)
-  type(algexpr), parameter, private :: dk_par_dT_e= algexpr(basic=.true.,var=35)
-  type(algexpr), parameter, private :: dTe_i      = algexpr(basic=.true.,var=36)
-  type(algexpr), parameter, private :: ddTe_i_dT_i= algexpr(basic=.true.,var=37)
-  type(algexpr), parameter, private :: ddTe_i_dT_e= algexpr(basic=.true.,var=38)
-  type(algexpr), parameter, private :: ddTe_i_drho= algexpr(basic=.true.,var=39)
+  type(algexpr), parameter, private :: chi        = algexpr(basic=.true.,var=17)
+  type(algexpr), parameter, private :: R          = algexpr(basic=.true.,var=18)
+  type(algexpr), parameter, private :: D_perp     = algexpr(basic=.true.,var=19)
+  type(algexpr), parameter, private :: S_rho      = algexpr(basic=.true.,var=20)
+  type(algexpr), parameter, private :: S_j        = algexpr(basic=.true.,var=21)
+  type(algexpr), parameter, private :: eta        = algexpr(basic=.true.,var=22)
+  type(algexpr), parameter, private :: deta_dT    = algexpr(basic=.true.,var=23)
+  type(algexpr), parameter, private :: visco      = algexpr(basic=.true.,var=24)
+  type(algexpr), parameter, private :: dvisco_dT  = algexpr(basic=.true.,var=25)
+  type(algexpr), parameter, private :: k_perp     = algexpr(basic=.true.,var=26)
+  type(algexpr), parameter, private :: k_perp_i   = algexpr(basic=.true.,var=27)
+  type(algexpr), parameter, private :: k_perp_e   = algexpr(basic=.true.,var=28)
+  type(algexpr), parameter, private :: S_e        = algexpr(basic=.true.,var=29)
+  type(algexpr), parameter, private :: S_e_i      = algexpr(basic=.true.,var=30)
+  type(algexpr), parameter, private :: S_e_e      = algexpr(basic=.true.,var=31)
+  type(algexpr), parameter, private :: k_par      = algexpr(basic=.true.,var=32) 
+  type(algexpr), parameter, private :: k_par_i    = algexpr(basic=.true.,var=33)
+  type(algexpr), parameter, private :: k_par_e    = algexpr(basic=.true.,var=34)
+  type(algexpr), parameter, private :: dk_par_dT  = algexpr(basic=.true.,var=35)
+  type(algexpr), parameter, private :: dk_par_dT_i= algexpr(basic=.true.,var=36)
+  type(algexpr), parameter, private :: dk_par_dT_e= algexpr(basic=.true.,var=37)
+  type(algexpr), parameter, private :: dTe_i      = algexpr(basic=.true.,var=38)
+  type(algexpr), parameter, private :: ddTe_i_dT_i= algexpr(basic=.true.,var=39)
+  type(algexpr), parameter, private :: ddTe_i_dT_e= algexpr(basic=.true.,var=40)
+  type(algexpr), parameter, private :: ddTe_i_drho= algexpr(basic=.true.,var=41)
 
   ! Auxiliary variables (aux)
-  type(algexpr), parameter, private :: Bv2        = algexpr(basic=.true.,var=40)
-  type(algexpr), parameter, private :: B2         = algexpr(basic=.true.,var=41)
+  type(algexpr), parameter, private :: Bv2        = algexpr(basic=.true.,var=42)
+  type(algexpr), parameter, private :: B2         = algexpr(basic=.true.,var=43)
   type(const), private :: tstep, zeta, theta, visco_num, eta_num, D_perp_num, k_perp_num, gamma, reta
   
   type(algexpr), private :: rhs1, rhs2, rhs3, rhs4, rhs5, rhs6, rhs7
@@ -267,9 +267,9 @@ module mod_equations
       allocate(thread_eq(nbthreads))
       do i=1,nbthreads
         if (with_TiTe) then !> better to reduce for no TiTe?
-          allocate(thread_eq(i)%eq(41,0:n_order-1,0:n_order-1,0:n_order-1,4))
+          allocate(thread_eq(i)%eq(43,0:n_order-1,0:n_order-1,0:n_order-1,4))
         else
-          allocate(thread_eq(i)%eq(41,0:n_order-1,0:n_order-1,0:n_order-1,4))
+          allocate(thread_eq(i)%eq(43,0:n_order-1,0:n_order-1,0:n_order-1,4))
         end if
 #ifdef DEBUG
         allocate(thread_eq(i)%rhs1seq(countsubexprs(rhs1)))
@@ -461,7 +461,7 @@ module mod_equations
     character(2) :: num
     
     aux = (/ a_Bv2, ea_Bv2x, ea_Bv2y, ea_Bv2p, a_B2 /)
-    varnames = (/ "eq(40,0,0,0,:)", "eq(40,1,0,0,:)", "eq(40,0,1,0,:)", "eq(40,0,0,1,:)", "eq(41,0,0,0,:)" /)
+    varnames = (/ "eq(42,0,0,0,:)", "eq(42,1,0,0,:)", "eq(42,0,1,0,:)", "eq(42,0,0,1,:)", "eq(43,0,0,0,:)" /)
   end subroutine get_aux
   
   type(algexpr) function Bv_pbrack(a,b)

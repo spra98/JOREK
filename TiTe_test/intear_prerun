@@ -3,7 +3,7 @@
  restart = .t.
  regrid  = .f.
  refinement=.false.
- tstep_n = 1. 10.
+ tstep_n = .3  1.
  nstep_n = 20 1
 
  nout = 1
