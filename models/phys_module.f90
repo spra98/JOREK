@@ -22,6 +22,7 @@ module phys_module
   real*8  :: eta_rst              !< eta value from restart file
   logical :: visco_T_dependent    !< Viscosity dependent on temperature? Otherwise constant.
   real*8  :: visco_par            !< Parallel viscosity (normalized)
+  real*8  :: t_rat
   real*8  :: F0                   !< Determines fixed toroidal magnetic field: \f$ B_\phi = F_0/R \f$
   real*8  :: central_density      !< particle density at the magnetic axis (in units of \f$10^{20} m^{-3}\f$)
   real*8  :: central_mass         !< average ion mass in atomic mass units (constant in time and space)
@@ -597,9 +598,7 @@ module phys_module
   real*8  :: Te_0           !< Central ion normalized temperature
   real*8  :: Te_1           !< SOL ion normalized temperature
   real*8  :: Te_coef(10)    !< Ion temperature profile coefficients
- 
-  real*8  :: t_rat          !< ratio between ion and electron temperature (model083) 
-
+  
   !> @name Numerical input profile for the temperature
   character(len=512)  :: T_file          !< ASCII file the temperature profile is read from.
   logical             :: num_T           !< automatically set true if T_file /= 'none'

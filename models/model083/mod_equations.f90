@@ -6,14 +6,13 @@ module mod_equations
 
   type type_thread_eq
 #ifdef DEBUG
-    type(action), dimension(:), allocatable :: rhs1seq, rhs3seq, rhs6seq, rhs7seq
+    type(action), dimension(:), allocatable :: rhs1seq, rhs3seq, rhs6seq
     type(action), dimension(:), allocatable :: amat11seq, amat13seq
     type(action), dimension(:), allocatable :: amat22seq
     type(action), dimension(:), allocatable :: amat33seq
     type(action), dimension(:), allocatable :: amat44seq
     type(action), dimension(:), allocatable :: amat55seq
     type(action), dimension(:), allocatable :: amat66seq
-    type(action), dimension(:), allocatable :: amat77seq
     type(action), dimension(:), allocatable :: aBv2seq, aBv2xseq, aBv2yseq, aBv2pseq
 #endif
 
@@ -63,17 +62,16 @@ module mod_equations
   type(algexpr), private :: amat71, amat72, amat73, amat75, amat76, amat77
   type(algexpr), private :: a_Bv2
 
-  integer            :: n_rhs, n_amat !3, 7 or with_TiTe 4, 
+  integer            :: n_rhs, n_amat
   integer, parameter :: n_aux = 4
 
   type(const), private :: t_rat
 
-  type(algexpr), private :: rhs2e, rhs3e, rhs4e, rhs5e, rhs6e, rhs7e
-  type(algexpr), private :: amat22e, amat25e, amat26e, amat27e
+  type(algexpr), private :: rhs2e, rhs3e, rhs4e, rhs5e, rhs6e
+  type(algexpr), private :: amat22e, amat25e, amat26e
   type(algexpr), private :: amat31e
   type(algexpr), private :: amat52e, amat55e
-  type(algexpr), private :: amat62e, amat65e, amat66e, amat67e
-  type(algexpr), private :: amat72e, amat75e, amat76e, amat77e
+  type(algexpr), private :: amat62e, amat65e, amat66e
   type(algexpr), private :: ea_Bv2x, ea_Bv2y, ea_Bv2p
 
   type(type_thread_eq), dimension(:), allocatable, target :: thread_eq
@@ -93,9 +91,10 @@ module mod_equations
 
     rhs3 = -dx(v)*(dy(chi)*B0p_gvec - dp(chi)*B0y_gvec/R) + dy(v)*(dx(chi)*B0p_gvec - dp(chi)*B0x_gvec/R) &
          - dp(v)*(dx(chi)*B0y_gvec - dy(chi)*B0x_gvec)/R
+
     if (with_TiTe) then
-      rhs6 = v*(1.0*p0_gvec/rho0 - T0_i)
-      rhs7 = v*((1.d0-1.0)*p0_gvec/rho0 - T0_e)    
+      rhs6 = v*(t_rat*p0_gvec/rho0 - T0_i)
+      rhs7 = v*((1.d0-t_rat)*p0_gvec/rho0 - T0_e)
     else
       rhs6 = v*(p0_gvec/rho0 - T0)
     end if
@@ -134,7 +133,7 @@ module mod_equations
         allocate(thread_eq(i)%rhs1seq(countsubexprs(rhs1)))
         allocate(thread_eq(i)%rhs3seq(countsubexprs(rhs3)))
         allocate(thread_eq(i)%rhs6seq(countsubexprs(rhs6)))
-        allocate(thread_eq(i)%rhs7seq(countsubexprs(rhs7)))
+        if (with_TiTe) allocate(thread_eq(i)%rhs7seq(countsubexprs(rhs7)))
         allocate(thread_eq(i)%amat11seq(countsubexprs(amat11)))
         allocate(thread_eq(i)%amat13seq(countsubexprs(amat13)))
         allocate(thread_eq(i)%amat22seq(countsubexprs(amat22)))
@@ -142,7 +141,7 @@ module mod_equations
         allocate(thread_eq(i)%amat44seq(countsubexprs(amat44)))
         allocate(thread_eq(i)%amat55seq(countsubexprs(amat55)))
         allocate(thread_eq(i)%amat66seq(countsubexprs(amat66)))
-        allocate(thread_eq(i)%amat77seq(countsubexprs(amat77)))
+        if (with_TiTe) allocate(thread_eq(i)%amat77seq(countsubexprs(amat77)))
         allocate(thread_eq(i)%aBv2seq(countsubexprs(a_Bv2)))
         allocate(thread_eq(i)%aBv2xseq(countsubexprs(ea_Bv2x)))
         allocate(thread_eq(i)%aBv2yseq(countsubexprs(ea_Bv2y)))
@@ -162,7 +161,7 @@ module mod_equations
       call buildsequence(rhs1, thread_eq(i)%rhs1seq, thread_eq(i)%eq)
       call buildsequence(rhs3, thread_eq(i)%rhs3seq, thread_eq(i)%eq)
       call buildsequence(rhs6, thread_eq(i)%rhs6seq, thread_eq(i)%eq)
-      call buildsequence(rhs7, thread_eq(i)%rhs7seq, thread_eq(i)%eq)
+      if (with_TiTe) call buildsequence(rhs7, thread_eq(i)%rhs7seq, thread_eq(i)%eq)
 
       call buildsequence(amat11, thread_eq(i)%amat11seq, thread_eq(i)%eq)
       call buildsequence(amat13, thread_eq(i)%amat13seq, thread_eq(i)%eq)
@@ -177,7 +176,7 @@ module mod_equations
 
       call buildsequence(amat66, thread_eq(i)%amat66seq, thread_eq(i)%eq)
 
-      call buildsequence(amat77, thread_eq(i)%amat77seq, thread_eq(i)%eq)
+      if (with_TiTe) call buildsequence(amat77, thread_eq(i)%amat77seq, thread_eq(i)%eq)
 
       call buildsequence(a_Bv2, thread_eq(i)%aBv2seq, thread_eq(i)%eq)
       call buildsequence(ea_Bv2x, thread_eq(i)%aBv2xseq, thread_eq(i)%eq)
@@ -207,6 +206,7 @@ module mod_equations
 
   subroutine get_amat(amat,varnames)
     implicit none
+
     type(algexpr), allocatable, intent(out) :: amat(:)
     character(7),  allocatable, intent(out) :: varnames(:)
 
