@@ -276,18 +276,21 @@ module mod_poloidal_currents
     type (type_bnd_node_list),    intent(in)    :: bnd_node_list
 
     ! --- Local variables
-    integer               :: m_bndelem, m_pt, m_elm, mv1, in, ms, i, j
-    integer               :: k_vertex, k_dof, k_node, k_dir, i_file, ierr
+    integer               :: m_bndelem, m_pt, m_elm, mv1, in, ms, i, j, mp
+    integer               :: k_vertex, k_dof, k_node, k_dir, i_file, i_file_all, ierr
     real*8                :: zj(n_gauss), psi_s(n_gauss),rho(n_gauss), T0(n_gauss)
+    real*8                :: zj_all(n_gauss, n_plane) , psi_s_all(n_gauss, n_plane), rho_all(n_gauss, n_plane), T0_all(n_gauss, n_plane)
     real*8                :: rho_s(n_gauss), T0_s(n_gauss) 
     real*8                :: P0_s(n_gauss), J_normal(n_gauss)
+    real*8                :: rho_s_all(n_gauss, n_plane), T0_s_all(n_gauss, n_plane) 
+    real*8                :: P0_s_all(n_gauss, n_plane), J_normal_all(n_gauss, n_plane)
     real*8                :: k_size, fact, R_c, Z_c, vec_inside(2), grad_t(2)
     real*8                :: G(4,n_degrees), sign_out
-    real*8                :: R(n_gauss), Z(n_gauss), R_s(n_gauss), Z_s(n_gauss)    
+    real*8                :: R(n_gauss), Z(n_gauss), R_s(n_gauss), Z_s(n_gauss), phi(n_plane)
     type(type_node)       :: node_k
     type(type_element)    :: elm_k
     type(type_bnd_element):: bndelem
-    character(len=1024)   :: filename
+    character(len=1024)   :: filename, filename_all
     character(len=14), parameter :: DIR = './jnorm_files/' 
 
     fact = 1.d0
@@ -296,12 +299,20 @@ module mod_poloidal_currents
     call system('mkdir -p '//DIR)
     
     write(filename,'(4a)') DIR, 'Jnorm_RZ_tnow_', trim(real2str(t_now,'(f12.4)')), '.dat'
+    write(filename_all,'(4a)') DIR, 'Jnorm_RZphi_tnow_', trim(real2str(t_now,'(f12.4)')), '.dat'
     i_file=133
+    i_file_all = 134
 
     open(i_file, file=trim(filename), form='formatted', status='replace', access='sequential',  &
         iostat=ierr)
     
     write(i_file,'(a)') '#               R               Z              J_norm'
+
+
+    open(i_file_all, file=trim(filename_all), form='formatted', status='replace', access='sequential',  &
+        iostat=ierr)
+    
+    write(i_file_all,'(a)') '#               R               Z              phi              J_norm'
  
     !--- go through the boundary elements
     do m_bndelem = 1, bnd_elm_list%n_bnd_elements
@@ -311,8 +322,8 @@ module mod_poloidal_currents
  
       !--- calculate values at gaussian points on the element
       R     = 0.d0;      Z = 0.d0;   R_s = 0.d0;   Z_s = 0.d0      
-      zj    = 0.d0;  psi_s = 0.d0;   rho = 0.d0;    T0 = 0.d0
-      rho_s = 0.d0;   T0_s = 0.d0;  P0_s = 0.d0
+      zj    = 0.d0; zj_all = 0.d0;   psi_s = 0.d0;  psi_s_all = 0.d0;   rho = 0.d0; rho_all = 0.d0;   T0 = 0.d0 ; T0_all = 0.d0;
+      rho_s = 0.d0; rho_s_all = 0.d0;  T0_s = 0.d0; T0_s_all = 0.d0;  P0_s = 0.d0 ; P0_s_all = 0.d0;
    
       do k_vertex = 1, 2
         do k_dof = 1, 2
@@ -338,6 +349,22 @@ module mod_poloidal_currents
               rho = 1.d0; rho_s = 0.d0; T0 = 0.d0; T0_s = 0.d0 
             endif        
           enddo
+
+          ! Do it for all planes
+          do mp=1,n_plane
+            do in=1,n_tor
+              psi_s_all(:,mp) = psi_s_all(:,mp)  + node_k%values(in,k_dir,1) * k_size*H1_s(k_vertex,k_dof,:) * HZ(in,mp)
+              zj_all   (:,mp) = zj_all   (:,mp)  + node_k%values(in,k_dir,3) * k_size*  H1(k_vertex,k_dof,:) * HZ(in,mp)
+              if (jorek_model > 190) then  
+                rho_all  (:,mp) = rho_all  (:,mp)  + node_k%values(in,k_dir,5) * k_size*  H1(k_vertex,k_dof,:) * HZ(in,mp)
+                rho_s_all(:,mp) = rho_s_all(:,mp)  + node_k%values(in,k_dir,5) * k_size*H1_s(k_vertex,k_dof,:) * HZ(in,mp)
+                T0_all  (:,mp) = T0_all   (:,mp)  + node_k%values(in,k_dir,6) * k_size*  H1(k_vertex,k_dof,:) * HZ(in,mp)
+                T0_s_all (:,mp) = T0_s_all (:,mp)  + node_k%values(in,k_dir,6) * k_size*H1_s(k_vertex,k_dof,:) * HZ(in,mp)
+              else
+                rho_all(:,:)= 1.d0; rho_s_all(:,:) = 0.d0; T0_all(:,:) = 0.d0; T0_s_all(:,:) = 0.d0 
+              endif
+            enddo
+          enddo
         
         end do
       end do
@@ -361,16 +388,35 @@ module mod_poloidal_currents
       sign_out   = -1.d0 * sign( 1.d0, ( vec_inside(1)*grad_t(1) + vec_inside(2)*grad_t(2) ) )  
       !--------------------------------------------------------------------------------
 
-      P0_s(:)     = T0(:) * rho_s(:) + T0_s(:) * rho(:)
+      P0_s(:)     = T0(:) * rho_s(:) + T0_s(:) * rho(:)      
       J_normal(:) = (zj(:) * psi_s(:) + R(:)**2.d0 * P0_s(:)) &
                     /sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out
+
+      ! For all planes
+
+      do mp=1, n_plane
+        P0_s_all (:,mp)     = T0_all(:,mp) * rho_s_all(:,mp) + T0_s_all(:,mp) * rho_all(:,mp)
+        phi       (mp)      = 2.d0*PI*float(mp-1)/float(n_plane) / float(n_period)
+
+      enddo
+
+      do mp=1,n_plane
+        J_normal_all (:, mp) =  (zj_all(:,mp) * psi_s_all(:,mp) + R(:)**2.d0 * P0_s_all(:, mp)) &
+                    /sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out
+      enddo
 
       do ms = 1, n_gauss 
         write(i_file,'(3es20.10)') R(ms), Z(ms), J_normal(ms) * fact
       enddo
-  
+
+      do mp = 1 , n_plane
+        do ms = 1, n_gauss
+          write(i_file_all,'(3es20.10)') R(ms), Z(ms), phi(mp), J_normal_all(ms,mp) * fact
+        enddo
+      enddo
     enddo !--- bnd elements
     close(i_file)
+    close(i_file_all)
 
   end subroutine normal_bnd_curr
 
