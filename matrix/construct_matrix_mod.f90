@@ -292,6 +292,7 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
   use mod_axis_treatment
   use mod_simulation_data, only: type_MHD_SIM
   use global_distributed_matrix, only: global_matrix_structure_vacuum
+  use vacuum, only: Jn_output
   
   !$ use omp_lib
   implicit none
@@ -730,13 +731,16 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
 
   ! --- Memory tracking
   call tr_vnorms("cm_A_aft_bc", a_mat%val, a_mat%nnz)
-
   ! --- Add vacuum response (boundary integral) for free boundary computations
   if ( freeboundary .and. ( sr%n_tor /= 0 ) ) then
     call vacuum_boundary_integral(my_id, bnd_node_list, node_list, bnd_elm_list, freeboundary_equil, &
                                   resistive_wall, my_ind_min, my_ind_max, rhs_local, tstep, index_now, a_mat)
   endif
-
+  
+  if (my_id == 0) then
+  call Jn_output(node_list, element_list, bnd_elm_list, bnd_node_list, .false., my_id)
+  endif
+  
   if ( .not. harmonic_matrix ) then 
     ! --- Summarise element_matrix comparison
 #ifdef COMPARE_ELEMENT_MATRIX

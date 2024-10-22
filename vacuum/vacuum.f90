@@ -1171,5 +1171,532 @@ module vacuum
     call MPI_BARRIER(MPI_COMM_WORLD, ierr)
 
   end subroutine print_distr
+
+
+  subroutine Jn_output(node_list, element_list, bnd_elm_list, bnd_node_list, equidistant, my_id)
+
+  use constants
+  use basis_at_gaussian
+  use mod_basisfunctions
+  use mod_parameters, only: n_degrees
+  use data_structure
+  use phys_module
+
+  implicit none
+  ! Input, output variables
+  type (type_node_list),        intent(in)    :: node_list
+  type (type_element_list),     intent(in)    :: element_list
+  type (type_bnd_element_list), intent(in)    :: bnd_elm_list   
+  type (type_bnd_node_list),    intent(in)    :: bnd_node_list
+  logical,                      intent(in)    :: equidistant
+  integer,                      intent(in)    :: my_id
+
+
+  ! Local variables
+  type(type_node)       :: node_k
+  type(type_element)    :: elm_k
+  type(type_bnd_element):: bndelem  
+  real*8                :: R(n_gauss), Z(n_gauss), R_s(n_gauss), Z_s(n_gauss), R_c, Z_c
+  real*8, allocatable   :: zj(:), psi_s(:), rho(:), psi_s_mat(:,:), zj_mat(:,:)
+  real*8, allocatable   :: T0(:), rho_s(:), T0_s(:), P0_s(:)
+  real*8, allocatable   :: fourier_psi_s_0(:,:), fourier_zj_0(:,:), psi_s_0(:), psi_s_0_mat(:,:), zj_0(:), zj_0_mat(:,:)
+  real*8, allocatable   ::  J_normal_temp(:), J_normal(:), J_normal_mat(:,:)
+  integer               :: k_vertex, k_dof, k_node, k_dir, m_bndelem, i ,j
+  integer               :: nctrl, nsub_ctrl, npol, mp, in
+  real*8                :: k_size,vec_inside(2), grad_t(2), sign_out, phi(n_plane), G(4, n_degrees)
+  real*8, allocatable   :: Jn_bez(:) , Jn_bez_mat(:,:)                   !< output matrix with Bezier
+
+  ! Number of total control points on the JOREK surface
+    if (equidistant) then
+      nctrl = bnd_elm_list%n_bnd_elements * nsub_ctrl * n_plane
+    else 
+      nsub_ctrl = n_gauss
+      nctrl = bnd_elm_list%n_bnd_elements * nsub_ctrl * n_plane
+    endif
+
+    npol  = nctrl / n_plane
+
+    if (ALLOCATED(zj)) deallocate(zj)
+    if (ALLOCATED(psi_s)) deallocate(psi_s)
+    if (ALLOCATED(zj_mat)) deallocate(zj_mat)
+    if (ALLOCATED(psi_s_mat)) deallocate(psi_s_mat)
+    if (ALLOCATED(rho)) deallocate(rho)
+    if (ALLOCATED(T0)) deallocate(T0)
+    if (ALLOCATED(rho_s)) deallocate(rhO_s)
+    if (ALLOCATED(T0_s)) deallocate(T0_s)
+    if (ALLOCATED(P0_s)) deallocate(P0_s)
+    if (ALLOCATED(fourier_psi_s_0)) deallocate(fourier_psi_s_0)
+    if (ALLOCATED(fourier_zj_0)) deallocate(fourier_zj_0)
+    if (ALLOCATED(psi_s_0)) deallocate(psi_s_0)
+    if (ALLOCATED(zj_0)) deallocate(zj_0)
+    if (ALLOCATED(psi_s_0_mat)) deallocate(psi_s_0_mat)
+    if (ALLOCATED(zj_0_mat)) deallocate(zj_0_mat)   
+    if (ALLOCATED(J_normal_temp)) deallocate(J_normal_temp)
+    if (ALLOCATED(J_normal)) deallocate(J_normal)
+    if (ALLOCATED(J_normal_mat)) deallocate(J_normal_mat)
+    if (ALLOCATED(Jn_bez)) deallocate(Jn_bez)
+     if (ALLOCATED(Jn_bez_mat)) deallocate(Jn_bez_mat)
+   
+
+    allocate(zj(nsub_ctrl*n_plane), psi_s(nsub_ctrl*n_plane), psi_s_mat(nsub_ctrl*n_plane,1), &
+    zj_mat(nsub_ctrl*n_plane,1), rho(nsub_ctrl*n_plane), T0(nsub_ctrl*n_plane), &
+    rho_s(nsub_ctrl*n_plane) , T0_s(nsub_ctrl*n_plane) , P0_s(nsub_ctrl*n_plane), fourier_psi_s_0(nsub_ctrl,1), &
+    fourier_zj_0(nsub_ctrl,1),  psi_s_0(nsub_ctrl*n_plane)  , zj_0(nsub_ctrl*n_plane), &
+    psi_s_0_mat(nsub_ctrl*n_plane,1), zj_0_mat(nsub_ctrl*n_plane,1), &
+    J_normal_temp(nsub_ctrl*n_plane) , J_normal(nctrl), J_normal_mat(nctrl,1), Jn_bez(npol) , Jn_bez_mat(npol,1)   )
+
+      
+   J_normal = 0.d0 ; Jn_bez = 0.d0; Jn_bez_mat = 0.d0; J_normal_mat=0.d0
+
+  !--- go through the boundary elements
+  do m_bndelem = 1, bnd_elm_list%n_bnd_elements
+    
+    bndelem = bnd_elm_list%bnd_element(m_bndelem)
+    elm_k   = element_list%element(bndelem%element)
  
-end module vacuum
+    !--- calculate values at gaussian points on the element
+    R     = 0.d0;      Z = 0.d0;   R_s = 0.d0;   Z_s = 0.d0      
+    zj    = 0.d0;      psi_s = 0.d0;   rho = 0.d0;   T0 = 0.d0 ; 
+    rho_s = 0.d0;      T0_s = 0.d0;  P0_s = 0.d0 ; 
+    fourier_psi_s_0 = 0.d0 ; fourier_zj_0 = 0.d0; psi_s_0 = 0.d0; zj_0 = 0.d0 ; J_normal_temp = 0.d0
+    psi_s_mat = 0.d0; zj_mat = 0.d0; psi_s_0_mat = 0.d0 ; zj_0_mat = 0.d0
+      
+
+    do k_vertex = 1, 2
+      do k_dof = 1, 2
+
+        k_node   = bndelem%vertex(k_vertex)
+        k_dir    = bndelem%direction(k_vertex,k_dof)
+        k_size   = bndelem%size(k_vertex,k_dof)
+        node_k   = node_list%node(k_node)
+        
+        R  (:)   = R  (:)  + node_k%x(1,k_dir,1) * k_size * H1  (k_vertex,k_dof,:)
+        Z  (:)   = Z  (:)  + node_k%x(1,k_dir,2) * k_size * H1  (k_vertex,k_dof,:)
+        R_s(:)   = R_s(:)  + node_k%x(1,k_dir,1) * k_size * H1_s(k_vertex,k_dof,:)
+        Z_s(:)   = Z_s(:)  + node_k%x(1,k_dir,2) * k_size * H1_s(k_vertex,k_dof,:)
+
+        do mp=1,n_plane
+          do in=1,n_tor
+            psi_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = psi_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,1) * k_size*H1_s(k_vertex,k_dof,:) * HZ(in,mp)
+            zj   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)   = zj   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,3) * k_size*H1(k_vertex,k_dof,:) * HZ(in,mp)
+            if (jorek_model > 200 ) then
+              rho  ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = rho  ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,5) * k_size*  H1(k_vertex,k_dof,:) * HZ(in,mp)
+              rho_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = rho_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,5) * k_size*H1_s(k_vertex,k_dof,:) * HZ(in,mp)
+              T0   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = T0   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,6) * k_size*  H1(k_vertex,k_dof,:) * HZ(in,mp)
+              T0_s ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = T0_s ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,6) * k_size*H1_s(k_vertex,k_dof,:) * HZ(in,mp)
+            else
+              rho = 1.d0; rho_s = 0.d0; T0 = 0.d0; T0_s = 0.d0 
+            endif        
+          enddo
+        enddo
+      enddo
+    enddo
+
+    !--- Find out correct sign of the normal (it has to point outwards the domain)
+    !---------------------------------------------------------------------------------- 
+    ! --- Calculate an inside point on the element to calculate the
+    ! direction of bnd normals
+    call basisfunctions(xgauss(2),xgauss(2), G)  
+    R_c = 0.d0 ;  Z_c = 0.d0 
+    do i = 1, n_vertex_max
+      do j = 1, n_degrees
+        node_k = node_list%node(elm_k%vertex(i)) 
+        R_c    = R_c + node_k%x(1,j,1) * elm_k%size(i,j) * G(i,j)
+        Z_c    = Z_c + node_k%x(1,j,2) * elm_k%size(i,j) * G(i,j)
+      enddo
+    enddo  
+    vec_inside = (/ R_c - R(2), Z_c - Z(2) /)       ! vector pointing towards the domain
+    grad_t     = (/ -Z_s(2) , R_s(2) /)     ! gradient of the coordinate t (normal to the boundary here)
+    sign_out   = -1.d0 * sign( 1.d0, ( vec_inside(1)*grad_t(1) + vec_inside(2)*grad_t(2) ) )  
+      !--------------------------------------------------------------------------------
+      
+    do mp=1, n_plane
+      P0_s ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)     = T0((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) * rho_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + &
+                                                    T0_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) * rho((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)
+      phi   (mp)      = 2.d0*PI*float(mp-1)/float(n_plane) / float(n_period)
+    enddo
+      
+    ! ---- Implementation of Jn = 1/Bphi ( Bn(n=0) * Jphi + Jphi(n=0) * Bn )
+
+    ! Debugging
+    ! OPEN(UNIT=12, FILE="psi_s_vec.dat", ACTION="write", STATUS="replace")
+    ! DO i=1,nsub_ctrl*n_plane
+    !   WRITE(12,*) psi_s(i)
+    !  END DO
+    ! CLOSE(12)
+
+    ! ! Extract n=0 harmonics for field and toroidal current
+    psi_s_mat(:,1) = psi_s(:)
+    zj_mat(:,1)    = zj(:)
+     
+    call calc_fourier_coeff_single(psi_s_mat,  n_plane, nsub_ctrl, 1, 1, phi, fourier_psi_s_0, my_id  )
+    call calc_fourier_coeff_single( zj_mat, n_plane, nsub_ctrl , 1, 1, phi,  fourier_zj_0, my_id    )
+
+    ! Re-convert the n=0 to real space
+    call fourier2realspace(fourier_psi_s_0, 1, nsub_ctrl*n_plane, nsub_ctrl, n_plane, psi_s_0_mat)
+    call fourier2realspace(fourier_zj_0, 1, nsub_ctrl*n_plane,   nsub_ctrl, n_plane,    zj_0_mat)
+
+    psi_s_0(:) = psi_s_0_mat(:,1) ; zj_0(:) = zj_0_mat(:,1)
+
+    ! Output variables are arrays in real space, on the whole toroidal "slice" identified by the nsub_ctrl poloidal points
+
+    ! Loop over poloidal direction first, then toroidal
+    do mp=1,n_plane
+      J_normal_temp((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = (zj_0((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) * psi_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + &
+                                                  psi_s_0((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)*zj((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + &
+                                                  R(:)**2.d0 * P0_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)) /sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out
+    enddo
+
+    do mp = 1,n_plane
+      J_normal( (m_bndelem-1)*nsub_ctrl+1+(mp-1)*npol : m_bndelem*nsub_ctrl+(mp-1)*npol ) = J_normal_temp((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)                                            
+    enddo
+
+    ! !Debugging
+    ! OPEN(UNIT=12, FILE="Jn_array.dat", ACTION="write", STATUS="replace")
+    ! DO i=1,nsub_ctrl*n_plane
+    !   WRITE(12,*) J_normal_temp(i)
+    ! END DO
+    ! CLOSE(12)
+
+
+  enddo ! end bnd elements loop
+
+    ! !Debugging
+    ! if (my_id == 0) then
+    ! OPEN(UNIT=12, FILE="Jn_tot_array.dat", ACTION="write", STATUS="replace")
+    ! DO i=1,nctrl
+    !   WRITE(12,*) J_normal(i)
+    ! END DO
+    ! CLOSE(12)
+    ! endif
+   
+  J_normal_mat(:,1) = J_normal(:)
+  
+ ! Transform the assembled array in Bezier
+  call fourier( J_normal_mat, nctrl, n_plane, nsub_ctrl, 1, phi , equidistant, Jn_bez_mat, my_id , bnd_node_list, bnd_elm_list)
+
+  Jn_bez(:) = Jn_bez_mat(:,1)
+
+      !Debugging
+    if (my_id == 0) then
+    OPEN(UNIT=12, FILE="Jn_bez.dat", ACTION="write", STATUS="replace")
+    DO i=1,npol
+      WRITE(12,*) Jn_bez(i)
+    END DO
+    CLOSE(12)
+    endif
+
+  end subroutine Jn_output
+ 
+  subroutine fourier(A, nctrl, ntor_f, nsub_ctrl, ndim, phi_ctrl,equidistant, global ,my_id, node_list, element_list)
+  use data_structure
+
+    real*8 :: A(nctrl,ndim)                               !< Function to fourier decompose
+    real*8, allocatable  :: global(:,:)                 !< output matrix with Bezier
+    type (type_bnd_node_list),        intent(in)    :: node_list
+    type (type_bnd_element_list),     intent(in)    :: element_list
+    integer, intent(in)  :: nctrl, ndim, ntor_f, nsub_ctrl !< number of poloidal points, dim, toroidal points
+    real*8, intent(in) :: phi_ctrl(:) 
+    logical, intent(in) :: equidistant
+    character*2 :: rank
+    integer :: i, j, inode, i_v, i_order, iv
+    integer :: ind, ind0, ind_glob
+    integer :: my_id
+    integer :: n_dof_tot, npol
+    real*8, allocatable, dimension(:,:) :: fourier_coeff, bez
+
+   ! n_dof_bnd = node_list%n_dof_bnd
+    n_dof_tot = n_dof_bnd*sr%n_tor
+    npol = nctrl/ntor_f
+    
+    allocate(fourier_coeff(npol,ndim), bez(n_dof_bnd, ndim))
+    if (allocated(global)) deallocate(global)
+    allocate(global(n_dof_tot,ndim))
+    if ( my_id .eq. 0 ) write(*,*) 'transform into realspace and bezier'
+
+    do i = 1, sr%n_tor
+       call calc_fourier_coeff_single(A,  ntor_f, npol, i, ndim, phi_ctrl, fourier_coeff,my_id)
+       call realspace2bezier(bez, fourier_coeff, ndim, nsub_ctrl, equidistant, node_list, element_list)
+       do inode = 1, node_list%n_bnd_nodes
+          do i_order=1,2
+             ind  = global_JOREK_index(node_list,inode, i_order, i, sr%n_tor)
+             ind0 = JOREK_index_1mode(node_list,inode, i_order)
+             global(ind,:) = bez(ind0,:)
+          end do
+       end do
+    end do
+    deallocate(fourier_coeff, bez)
+    if ( my_id .eq. 0 ) write(*,*) 'end of fourier routine'
+
+  end subroutine fourier
+
+  !< Calculate toroidal Fourier coefficients of function
+  subroutine calc_fourier_coeff_single(f, ntor_f, npol, itor_J ,ndim, phi_ctrl, fourier,my_id)
+    real*8,  allocatable  ::  fourier(:,:)      !< Fourier coefficient, f(npol, ndim)
+    real*8,  intent(in)   ::  f(:,:)            !< function to decompose
+                                                !< size( npol*ntor_f:ndim )
+                                                !< Ordering first in poloidal direction then in toroidal
+    integer, intent(in)   ::  npol,  ntor_f     !< # of poloidal field points, toroidal points
+    integer, intent(in)   ::  itor_J            !< harmonic in JOREK convention
+    integer, intent(in)   ::  ndim              !< second dimension of input function
+    real*8,  intent(in)   ::  phi_ctrl(:)       !< phi of control surface (in realspace convention)
+                                                !< dimension = ntor_f
+    integer, intent(in)   ::  my_id           !< MPI rank
+    
+    !<----------------Local variables ----------------------------
+    integer :: itor      !< number of harmonic in realspace convention
+    integer :: jphi, k, i_start, i_end
+    real*8  :: phi       
+    logical :: is_c      !< T = cos, F = sin
+    
+    if (.not. allocated(fourier)) allocate(fourier(npol,ndim))
+    !< calculate real harmonics from JOREK input
+    itor = itor_fourier(itor_J)
+    is_c = is_c_JOREK(itor_J)
+    !if (my_id == 0) then
+   ! write(*,*) 'itor which should be 1', itor
+   ! write(*,*) 'is_c ', is_c 
+   ! endif
+    fourier=0.d0
+    
+  !  write(*,*) ' itor_J = ', itor_J, ', itor = ', itor, ', is_c = ', is_c, ', nharm(itor) = ', nharm(itor)
+
+    do jphi = 1, ntor_f   ! poloidal planes 
+       phi     =  phi_ctrl(jphi)
+       i_start = (jphi-1)*npol + 1
+       i_end   =  jphi   *npol
+       if(is_c) then
+          fourier(:,:)   = fourier(:,:) + 2*cos(phi * sr%i_tor(itor) )/ntor_f * f(i_start:i_end,:)
+       else
+          fourier(:,:)   = fourier(:,:) - 2*sin(phi * sr%i_tor(itor) )/ntor_f * f(i_start:i_end,:)
+          ! minus from the JOREK convention, phi has to be given in realspace convention
+      end if
+   end do
+
+   if (sr%i_tor(itor)==0) fourier=fourier/2.d0
+
+  end subroutine calc_fourier_coeff_single
+
+
+
+  subroutine realspace2bezier(bez, f, ndim, nsub, equidistant, node_list, element_list)
+  use data_structure
+  use mod_basisfunctions
+  use gauss,          only: n_gauss, xgauss, wgauss
+    integer, intent(in)  :: nsub        !< Number of evaluation points to be used for quadrature
+    integer, intent(in)  :: ndim        !< Second Dimension of function f
+    real*8 , intent(in)  :: f(:,:)      !< function (Bfield) to be projected on Bezier basis (nsub*nelements:ndim)
+    logical, intent(in)  :: equidistant
+    real*8 , intent(out), allocatable :: bez(:,:)    !< Bezier coefficients
+    type (type_bnd_node_list),        intent(in)    :: node_list
+    type (type_bnd_element_list),     intent(in)    :: element_list
+
+    
+    real*8, dimension(4,4)                     :: LSQ            !> Coefficients of LHS matrix (s. wiki)
+    real*8, dimension(n_dof_bnd,n_dof_bnd)     :: aa, inv        !> matrix of LHS and its inverse
+    ! real*8, dimension(node_list%n_dof_bnd,   ndim)       :: integral       !> integrated function f of RHS
+    real*8, allocatable       :: integral(:,:)       !> integrated function f of RHS
+    real*8, dimension(2,2)                     :: H, Hs, Hss   !> basis functions
+    real*8, allocatable, dimension(:,:,:)              :: H_g            !> arrays of basis functions at gaussian points
+    real*8, allocatable, dimension(:)                  :: x, w           !> Evaluation points and Gaussian weights
+    real*8                                     :: s, sz(2,2)     !> coordinate in element, size of element
+    type(type_bnd_element)                     :: elm            !> element
+    integer                                    :: ielm, i1, i2, i3, i4, i, j, k, ii, dd, gg
+    integer                                    :: nd, info
+    integer                                    :: n_points_poloidal
+    integer, allocatable, dimension(:)         :: subseq
+    
+    if (allocated(bez)) deallocate(bez)
+    allocate(bez(n_dof_bnd,ndim))
+    allocate(integral(n_dof_bnd,ndim))
+    
+    LSQ = reshape([  52., 22., 18.,  13., &          !>(https://www.jorek.eu/wiki/doku.php?id=real_space2bezier.f90)       
+                 22., 12., 13.,   9., &
+                 18., 13., 52.,  22., &
+                 13.,  9., 22.,  12.] / 140., shape(LSQ))
+    
+    !< Vector used for the trapezoidal rule
+    n_points_poloidal = element_list%n_bnd_elements * nsub
+    allocate(subseq(n_points_poloidal))
+    subseq(1:n_points_poloidal-1) = (/ (ii, ii = 1,n_points_poloidal-1,1) /)
+    subseq(n_points_poloidal) = 0
+    subseq = subseq +1
+    
+    if (equidistant) then
+        if (ALLOCATED(x)) deallocate(x)
+        if (ALLOCATED(w)) deallocate(w)
+        if (ALLOCATED(H_g)) deallocate(H_g)
+        allocate(x(nsub+1))
+        allocate(w(nsub))
+        allocate(H_g(nsub+1,2,2))
+        w = 1.d0 / nsub
+      do j=1,nsub+1
+        x(j) = (j-1.d0)/nsub
+        call  basisfunctions1((x(j)), H, Hs, Hss)
+        H_g(j,:,:) = H                        ! basis function at Gaussian points       
+      end do
+    else
+        if (ALLOCATED(x)) deallocate(x)
+        if (ALLOCATED(w)) deallocate(w)
+        if (ALLOCATED(H_g)) deallocate(H_g)
+        allocate(x(nsub))
+        allocate(w(nsub))
+        allocate(H_g(nsub,2,2))
+        x = Xgauss
+        w = Wgauss
+        do j=1,nsub
+          call  basisfunctions1((x(j)), H, Hs, Hss)
+          H_g(j,:,:) = H                        ! basis function at Gaussian points
+        enddo
+    end if
+
+    aa = 0.d0
+    integral = 0.d0
+    do ielm=1,element_list%n_bnd_elements  ! N_bnd: number of boundary elements from JOREK
+      elm = element_list%bnd_element(ielm)
+      i1 = node_list%bnd_node(elm%bnd_vertex(1))%index_starwall(1)
+      i2 = node_list%bnd_node(elm%bnd_vertex(1))%index_starwall(2)
+      i3 = node_list%bnd_node(elm%bnd_vertex(2))%index_starwall(1)
+      i4 = node_list%bnd_node(elm%bnd_vertex(2))%index_starwall(2)
+      sz = elm%size
+      
+  
+      ! ------- Calculate analytical integral of Bezier coefficients ------------------
+      aa(i1,i1) = aa(i1,i1) + LSQ(1,1) * sz(1,1) * sz(1,1)
+      aa(i1,i2) = aa(i1,i2) + LSQ(1,2) * sz(1,2) * sz(1,1)
+      aa(i1,i3) = aa(i1,i3) + LSQ(1,3) * sz(2,1) * sz(1,1)
+      aa(i1,i4) = aa(i1,i4) + LSQ(1,4) * sz(2,2) * sz(1,1)
+
+      aa(i2,i1) = aa(i2,i1) + LSQ(2,1) * sz(1,1) * sz(1,2)
+      aa(i2,i2) = aa(i2,i2) + LSQ(2,2) * sz(1,2) * sz(1,2)
+      aa(i2,i3) = aa(i2,i3) + LSQ(2,3) * sz(2,1) * sz(1,2)
+      aa(i2,i4) = aa(i2,i4) + LSQ(2,4) * sz(2,2) * sz(1,2)
+
+      aa(i3,i1) = aa(i3,i1) + LSQ(3,1) * sz(1,1) * sz(2,1)
+      aa(i3,i2) = aa(i3,i2) + LSQ(3,2) * sz(1,2) * sz(2,1)
+      aa(i3,i3) = aa(i3,i3) + LSQ(3,3) * sz(2,1) * sz(2,1)
+      aa(i3,i4) = aa(i3,i4) + LSQ(3,4) * sz(2,2) * sz(2,1)
+
+      aa(i4,i1) = aa(i4,i1) + LSQ(4,1) * sz(1,1) * sz(2,2)
+      aa(i4,i2) = aa(i4,i2) + LSQ(4,2) * sz(1,2) * sz(2,2)
+      aa(i4,i3) = aa(i4,i3) + LSQ(4,3) * sz(2,1) * sz(2,2)
+      aa(i4,i4) = aa(i4,i4) + LSQ(4,4) * sz(2,2) * sz(2,2)
+
+
+      !--------------- Interpolate function using Gauss points ------------------------
+      ! write(*,*) 'In element loop'
+      ! write(6,*) 'In element loop'
+      do k = 1, nsub
+        j = k + nsub*(ielm-1)
+        integral(i1, :) =  integral(i1, :) + (H_g(k,1,1)*f(j,:) + H_g(k+1,1,1)*f(subseq(j),:))/2 * sz(1,1)* w(k)
+        integral(i2, :) =  integral(i2, :) + (H_g(k,1,2)*f(j,:) + H_g(k+1,1,2)*f(subseq(j),:))/2 * sz(1,2)* w(k) 
+        integral(i3, :) =  integral(i3, :) + (H_g(k,2,1)*f(j,:) + H_g(k+1,2,1)*f(subseq(j),:))/2 * sz(2,1)* w(k) 
+        integral(i4, :) =  integral(i4, :) + (H_g(k,2,2)*f(j,:) + H_g(k+1,2,2)*f(subseq(j),:))/2 * sz(2,2)* w(k) 
+      enddo
+      ! write(*,*) 'In element loop, after nsub loop'
+      ! write(6,*) 'In element loop, after nsub loop'
+    enddo
+    ! write(*,*) 'After element loop'
+    ! write(6,*) 'After element loop'
+
+    !     do dd = 1,n_dof_bnd
+    !   do gg = 1,n_dof_bnd
+    !     write(*,*) 'realspace2bez debug', aa(dd,gg)
+    !   enddo
+    ! enddo
+    inv = 0.
+    do  i = 1, n_dof_bnd
+      inv(i,i) = 1.d0
+    enddo
+    nd  = n_dof_bnd
+
+    call dpotrf('U',nd,aa,nd,info)
+    call dpotrs('U',nd,nd,aa,nd,inv,nd,info)
+
+
+    ! ----------------------------------------------------------------------
+    bez = 0.
+
+    do i=1, n_dof_bnd
+      do k=1, n_dof_bnd
+        bez(i,:) = bez(i,:) + inv(i,k)*integral(k,:)
+      enddo
+    enddo
+    deallocate(integral)
+  end subroutine realspace2bezier
+
+
+  ! --- Routine to determine if which fourier mode corresponds to JOREK
+  pure integer function itor_fourier(itor_J)
+  
+    integer, intent(in) :: itor_J      ! --- mode in JOREK counting
+    if (sr%i_tor(1) .eq. 0 ) then
+      itor_fourier = itor_J/2 + 1   
+    else
+      itor_fourier = (itor_J+1)/2
+    end if
+
+
+  end function itor_fourier
+
+    ! --- Routine to determine if JOREK mode is sin or cos
+  pure logical function is_c_JOREK(itor_J)
+  
+    integer, intent(in) :: itor_J      ! --- mode in JOREK counting
+    if (sr%i_tor(1) .eq. 0 ) then
+      is_c_JOREK = mod(itor_J,2)==0
+      if (itor_J==1) is_c_JOREK = .true.
+    else
+      is_c_JOREK = mod(itor_J+1,2) == 0
+    end if
+  end function is_c_JOREK
+  
+  ! Called just for n=0
+  subroutine fourier2realspace(fourier, n_modes, nctrl, npol, ntor_f, real_func)
+  use constants
+  real*8 :: fourier(npol, n_modes)
+  integer :: npol, ntor_f, dim, nctrl, n_modes
+  real*8 :: phi, real_func(nctrl, n_modes)
+  integer :: i, j, k
+    
+  do i = 1, npol
+    do k = 1, ntor_f
+      phi = float(k-1)/ntor_f*2*pi
+      do j = 1, n_modes
+        if (is_c_JOREK(j)) then
+          real_func ((k-1)*npol+1:k*npol,j) = real_func((k-1)*npol+1:k*npol,j) + fourier(:,j) * cos(phi*sr%i_tor(j))
+        else
+         real_func ((k-1)*npol+1:k*npol,j) = real_func((k-1)*npol+1:k*npol,j) - fourier(:,j) * sin(phi*sr%i_tor(j))
+        end if
+      end do     
+    end do
+      
+  end do
+  end subroutine fourier2realspace
+
+    ! --- Routine to calculate the global JOREK index
+  pure integer function global_JOREK_index(node_list,i_v, i_dof, i_start, n_modes)
+    use data_structure
+    type (type_bnd_node_list),        intent(in)    :: node_list
+    integer, intent(in) :: i_v      ! --- Index of the vertex in the node_list
+    integer, intent(in) :: i_dof    ! --- Local dof of the node 
+    integer, intent(in) :: i_start  ! --- Mode counter
+    integer, intent(in) :: n_modes  ! --- Number of modes in JOREK (counting sine and cosine separately)
+
+    global_JOREK_index = (  node_list%bnd_node(i_v)%index_starwall(1)-1)*n_modes        &   
+        + node_list%bnd_node(i_v)%n_dof*(i_start-1)                &
+        - node_list%bnd_node(i_v)%index_starwall(1)                   & 
+        + node_list%bnd_node(i_v)%index_starwall(i_dof) + 1 
+
+  end function global_JOREK_index
+  ! --- Routine to calculate the global JOREK index
+  pure integer function JOREK_index_1mode(node_list,i_v, i_dof)
+    use data_structure
+    type (type_bnd_node_list),        intent(in)    :: node_list
+    integer, intent(in) :: i_v      ! --- Index of the vertex in the node_list
+    integer, intent(in) :: i_dof    ! --- Local dof of the node
+
+    JOREK_index_1mode  =  node_list%bnd_node(i_v)%index_starwall(i_dof)
+
+  end function JOREK_index_1mode
+ end module vacuum

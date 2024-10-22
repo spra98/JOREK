@@ -411,7 +411,7 @@ module mod_poloidal_currents
 
       do mp = 1 , n_plane
         do ms = 1, n_gauss
-          write(i_file_all,'(3es20.10)') R(ms), Z(ms), phi(mp), J_normal_all(ms,mp) * fact
+          write(i_file_all,'(4es20.10)') R(ms), Z(ms), phi(mp), J_normal_all(ms,mp) * fact
         enddo
       enddo
     enddo !--- bnd elements

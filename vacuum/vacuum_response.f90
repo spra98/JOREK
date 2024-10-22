@@ -1877,10 +1877,10 @@ module vacuum_response
   !! The magnetic field parallel to the interface (boundary of JOREK computational domain) is
   !! expressed by the STARWALL vacuum response in terms of the poloidal magnetic field at the
   !! interface (ideal and resistive wall) and the wall currents (resistive wall).
-  subroutine vacuum_boundary_integral(my_id, bnd_node_list, node_list,bnd_elm_list,               &
+  subroutine vacuum_boundary_integral(my_id, bnd_node_list, node_list,bnd_elm_list ,              &
     freeboundary_equil, resistive_wall, index_min, index_max, rhs_loc, tstep, index_now, a_mat)
 
-    use data_structure, only: type_node_list, type_bnd_node_list,type_bnd_element_list, type_bnd_element, type_SP_MATRIX
+    use data_structure, only: type_node_list, type_element_list, type_bnd_node_list,type_bnd_element_list, type_bnd_element, type_SP_MATRIX
     use mod_parameters, only: n_plane, n_var, n_tor
     use gauss,          only: n_gauss, xgauss, wgauss
     use global_distributed_matrix, only: det_row_col, det_sparse_pos
