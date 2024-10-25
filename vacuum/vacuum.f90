@@ -1173,7 +1173,7 @@ module vacuum
   end subroutine print_distr
 
 
-  subroutine Jn_output(node_list, element_list, bnd_elm_list, bnd_node_list, equidistant, my_id)
+  subroutine Jn_output(node_list, element_list, bnd_elm_list, bnd_node_list, equidistant, my_id, i_tor_min, i_tor_max)
 
   use constants
   use basis_at_gaussian
@@ -1189,25 +1189,34 @@ module vacuum
   type (type_bnd_element_list), intent(in)    :: bnd_elm_list   
   type (type_bnd_node_list),    intent(in)    :: bnd_node_list
   logical,                      intent(in)    :: equidistant
-  integer,                      intent(in)    :: my_id
+  integer,                      intent(in)    :: my_id, i_tor_min, i_tor_max
 
 
   ! Local variables
   type(type_node)       :: node_k
   type(type_element)    :: elm_k
   type(type_bnd_element):: bndelem  
-  real*8                :: R(n_gauss), Z(n_gauss), R_s(n_gauss), Z_s(n_gauss), R_c, Z_c
+  real*8, allocatable   :: R(:), Z(:), R_s(:), Z_s(:), R_global(:), Z_global(:), phi_global(:)
+  real*8                :: R_c, Z_c
   real*8, allocatable   :: zj(:), psi_s(:), rho(:), psi_s_mat(:,:), zj_mat(:,:)
   real*8, allocatable   :: T0(:), rho_s(:), T0_s(:), P0_s(:)
   real*8, allocatable   :: fourier_psi_s_0(:,:), fourier_zj_0(:,:), psi_s_0(:), psi_s_0_mat(:,:), zj_0(:), zj_0_mat(:,:)
-  real*8, allocatable   ::  J_normal_temp(:), J_normal(:), J_normal_mat(:,:)
-  integer               :: k_vertex, k_dof, k_node, k_dir, m_bndelem, i ,j
-  integer               :: nctrl, nsub_ctrl, npol, mp, in
-  real*8                :: k_size,vec_inside(2), grad_t(2), sign_out, phi(n_plane), G(4, n_degrees)
-  real*8, allocatable   :: Jn_bez(:) , Jn_bez_mat(:,:)                   !< output matrix with Bezier
+  real*8, allocatable   :: J_normal_temp(:), J_normal(:), J_normal_mat(:,:), Jn_back2real(:)
+  real*8                :: phi_v, size_i(2)
+  integer               :: k_vertex, k_dof, k_node, k_dir, m_bndelem, i ,j, index, i_vertex, i_node, i_start, i_node_bnd, i_dof
+  integer               :: nctrl, nsub_ctrl, npol, mp, in, l_tor, f_tor, i_resp_1, i_resp_2, m_pt, itor
+  real*8                :: k_size,vec_inside(2), grad_t(2), sign_out, phi(n_plane), G(4, n_degrees), s
+  type(type_bnd_element):: bndelem_m
+  real*8, allocatable   :: Jn_bez(:) , Jn_bez_mat(:,:), Bez2Real(:,:)                   !< output matrix with Bezier
+  logical               :: reconvert_to_real, is_c
+  integer               :: mode_n(sr%n_tor)
+
+  ! Reconvert for debugging?
+    reconvert_to_real = .true.
 
   ! Number of total control points on the JOREK surface
     if (equidistant) then
+      nsub_ctrl = 3
       nctrl = bnd_elm_list%n_bnd_elements * nsub_ctrl * n_plane
     else 
       nsub_ctrl = n_gauss
@@ -1215,6 +1224,8 @@ module vacuum
     endif
 
     npol  = nctrl / n_plane
+
+    mode_n = mode_number(sr%i_tor)
 
     if (ALLOCATED(zj)) deallocate(zj)
     if (ALLOCATED(psi_s)) deallocate(psi_s)
@@ -1235,18 +1246,30 @@ module vacuum
     if (ALLOCATED(J_normal)) deallocate(J_normal)
     if (ALLOCATED(J_normal_mat)) deallocate(J_normal_mat)
     if (ALLOCATED(Jn_bez)) deallocate(Jn_bez)
-     if (ALLOCATED(Jn_bez_mat)) deallocate(Jn_bez_mat)
-   
+    if (ALLOCATED(Jn_bez_mat)) deallocate(Jn_bez_mat)
+    if (ALLOCATED(Bez2Real)) deallocate(Bez2Real)
+    if (ALLOCATED(Jn_back2real)) deallocate(Jn_back2real)
+    if (ALLOCATED(R)) deallocate(R)
+    if (ALLOCATED(R_s)) deallocate(R_s)
+    if (ALLOCATED(Z)) deallocate(Z)
+    if (ALLOCATED(Z_s)) deallocate(Z_s)
+    if (ALLOCATED(R_global)) deallocate(R_global)
+    if (ALLOCATED(Z_global)) deallocate(Z_global)
+    if (ALLOCATED(phi_global)) deallocate(phi_global)
 
+    
     allocate(zj(nsub_ctrl*n_plane), psi_s(nsub_ctrl*n_plane), psi_s_mat(nsub_ctrl*n_plane,1), &
     zj_mat(nsub_ctrl*n_plane,1), rho(nsub_ctrl*n_plane), T0(nsub_ctrl*n_plane), &
     rho_s(nsub_ctrl*n_plane) , T0_s(nsub_ctrl*n_plane) , P0_s(nsub_ctrl*n_plane), fourier_psi_s_0(nsub_ctrl,1), &
     fourier_zj_0(nsub_ctrl,1),  psi_s_0(nsub_ctrl*n_plane)  , zj_0(nsub_ctrl*n_plane), &
-    psi_s_0_mat(nsub_ctrl*n_plane,1), zj_0_mat(nsub_ctrl*n_plane,1), &
-    J_normal_temp(nsub_ctrl*n_plane) , J_normal(nctrl), J_normal_mat(nctrl,1), Jn_bez(npol) , Jn_bez_mat(npol,1)   )
+    psi_s_0_mat(nsub_ctrl*n_plane,1), zj_0_mat(nsub_ctrl*n_plane,1), Jn_back2real(nctrl), &
+    R(nsub_ctrl), Z(nsub_ctrl), R_s(nsub_ctrl), Z_s(nsub_ctrl), &
+    R_global(nctrl), Z_global(nctrl), phi_global(nctrl), &
+    J_normal_temp(nsub_ctrl*n_plane) , J_normal(nctrl), J_normal_mat(nctrl,1), Jn_bez(n_dof_bnd*sr%n_tor) , Jn_bez_mat(n_dof_bnd*sr%n_tor,1), Bez2Real(nctrl, n_dof_bnd*sr%n_tor)   )
 
       
-   J_normal = 0.d0 ; Jn_bez = 0.d0; Jn_bez_mat = 0.d0; J_normal_mat=0.d0
+   J_normal = 0.d0 ; Jn_bez = 0.d0; Jn_bez_mat = 0.d0; J_normal_mat=0.d0 ; Bez2Real = 0.d0; Jn_back2real=0.d0
+   R_global = 0.d0; Z_global = 0.d0; phi_global = 0.d0
 
   !--- go through the boundary elements
   do m_bndelem = 1, bnd_elm_list%n_bnd_elements
@@ -1270,25 +1293,34 @@ module vacuum
         k_size   = bndelem%size(k_vertex,k_dof)
         node_k   = node_list%node(k_node)
         
-        R  (:)   = R  (:)  + node_k%x(1,k_dir,1) * k_size * H1  (k_vertex,k_dof,:)
-        Z  (:)   = Z  (:)  + node_k%x(1,k_dir,2) * k_size * H1  (k_vertex,k_dof,:)
-        R_s(:)   = R_s(:)  + node_k%x(1,k_dir,1) * k_size * H1_s(k_vertex,k_dof,:)
-        Z_s(:)   = Z_s(:)  + node_k%x(1,k_dir,2) * k_size * H1_s(k_vertex,k_dof,:)
+        if (.not. equidistant)  then    
 
-        do mp=1,n_plane
-          do in=1,n_tor
-            psi_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = psi_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,1) * k_size*H1_s(k_vertex,k_dof,:) * HZ(in,mp)
-            zj   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)   = zj   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,3) * k_size*H1(k_vertex,k_dof,:) * HZ(in,mp)
-            if (jorek_model > 200 ) then
-              rho  ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = rho  ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,5) * k_size*  H1(k_vertex,k_dof,:) * HZ(in,mp)
-              rho_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = rho_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,5) * k_size*H1_s(k_vertex,k_dof,:) * HZ(in,mp)
-              T0   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = T0   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,6) * k_size*  H1(k_vertex,k_dof,:) * HZ(in,mp)
-              T0_s ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = T0_s ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,6) * k_size*H1_s(k_vertex,k_dof,:) * HZ(in,mp)
-            else
-              rho = 1.d0; rho_s = 0.d0; T0 = 0.d0; T0_s = 0.d0 
-            endif        
-          enddo
-        enddo
+            R  (:)   = R  (:)  + node_k%x(1,k_dir,1) * k_size * H1  (k_vertex,k_dof,:)
+            Z  (:)   = Z  (:)  + node_k%x(1,k_dir,2) * k_size * H1  (k_vertex,k_dof,:)
+            R_s(:)   = R_s(:)  + node_k%x(1,k_dir,1) * k_size * H1_s(k_vertex,k_dof,:)
+            Z_s(:)   = Z_s(:)  + node_k%x(1,k_dir,2) * k_size * H1_s(k_vertex,k_dof,:)
+
+            do mp=1,n_plane
+              do in=1,n_tor
+                psi_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = psi_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,1) * k_size*H1_s(k_vertex,k_dof,:) * HZ(in,mp)
+                zj   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)   = zj   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,3) * k_size*H1(k_vertex,k_dof,:) * HZ(in,mp)
+                if (jorek_model > 200 ) then
+                  rho  ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = rho  ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,5) * k_size*  H1(k_vertex,k_dof,:) * HZ(in,mp)
+                  rho_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = rho_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,5) * k_size*H1_s(k_vertex,k_dof,:) * HZ(in,mp)
+                  T0   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = T0   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,6) * k_size*  H1(k_vertex,k_dof,:) * HZ(in,mp)
+                  T0_s ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = T0_s ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,6) * k_size*H1_s(k_vertex,k_dof,:) * HZ(in,mp)
+                else
+                  rho = 1.d0; rho_s = 0.d0; T0 = 0.d0; T0_s = 0.d0 
+                endif        
+              enddo
+            enddo
+
+
+        else
+        
+          
+        
+        endif
       enddo
     enddo
 
@@ -1315,6 +1347,11 @@ module vacuum
                                                     T0_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) * rho((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)
       phi   (mp)      = 2.d0*PI*float(mp-1)/float(n_plane) / float(n_period)
     enddo
+
+
+    ! Print field points
+
+
       
     ! ---- Implementation of Jn = 1/Bphi ( Bn(n=0) * Jphi + Jphi(n=0) * Bn )
 
@@ -1331,10 +1368,24 @@ module vacuum
      
     call calc_fourier_coeff_single(psi_s_mat,  n_plane, nsub_ctrl, 1, 1, phi, fourier_psi_s_0, my_id  )
     call calc_fourier_coeff_single( zj_mat, n_plane, nsub_ctrl , 1, 1, phi,  fourier_zj_0, my_id    )
+   
+    ! !Debugging
+    ! OPEN(UNIT=12, FILE="fourier_psi_s_0.dat", ACTION="write", STATUS="replace")
+    ! DO i=1,nsub_ctrl
+    !   WRITE(12,*) fourier_psi_s_0(i,1)
+    !  END DO
+    ! CLOSE(12)
 
     ! Re-convert the n=0 to real space
     call fourier2realspace(fourier_psi_s_0, 1, nsub_ctrl*n_plane, nsub_ctrl, n_plane, psi_s_0_mat)
     call fourier2realspace(fourier_zj_0, 1, nsub_ctrl*n_plane,   nsub_ctrl, n_plane,    zj_0_mat)
+
+    !    !Debugging
+    ! OPEN(UNIT=12, FILE="psi_s_0.dat", ACTION="write", STATUS="replace")
+    ! DO i=1,nsub_ctrl*n_plane
+    !   WRITE(12,*) psi_s_0_mat(i,1)
+    !  END DO
+    ! CLOSE(12)
 
     psi_s_0(:) = psi_s_0_mat(:,1) ; zj_0(:) = zj_0_mat(:,1)
 
@@ -1357,18 +1408,43 @@ module vacuum
     !   WRITE(12,*) J_normal_temp(i)
     ! END DO
     ! CLOSE(12)
-
-
+    do mp = 1,n_plane
+      R_global( (m_bndelem-1)*nsub_ctrl+1+(mp-1)*npol : m_bndelem*nsub_ctrl+(mp-1)*npol ) = R(:)                                            
+      Z_global( (m_bndelem-1)*nsub_ctrl+1+(mp-1)*npol : m_bndelem*nsub_ctrl+(mp-1)*npol ) = Z(:)
+      phi_global((m_bndelem-1)*nsub_ctrl+1+(mp-1)*npol : m_bndelem*nsub_ctrl+(mp-1)*npol) =  phi(mp)
+    enddo
+   
   enddo ! end bnd elements loop
 
-    ! !Debugging
-    ! if (my_id == 0) then
-    ! OPEN(UNIT=12, FILE="Jn_tot_array.dat", ACTION="write", STATUS="replace")
-    ! DO i=1,nctrl
-    !   WRITE(12,*) J_normal(i)
-    ! END DO
-    ! CLOSE(12)
-    ! endif
+
+  ! Print points
+
+      OPEN(UNIT=12, FILE="R_ctrl.dat", ACTION="write", STATUS="replace")
+    DO i=1,nctrl
+      WRITE(12,*) R_global(i)
+    END DO
+    CLOSE(12)
+
+        OPEN(UNIT=12, FILE="Z_ctrl.dat", ACTION="write", STATUS="replace")
+    DO i=1,nctrl
+      WRITE(12,*) Z_global(i)
+    END DO
+    CLOSE(12)
+
+        OPEN(UNIT=12, FILE="phi_ctrl.dat", ACTION="write", STATUS="replace")
+    DO i=1,nctrl
+      WRITE(12,*) phi_global(i)
+    END DO
+    CLOSE(12)
+
+    !Debugging
+    if (my_id == 0) then
+    OPEN(UNIT=12, FILE="Jn_tot_array.dat", ACTION="write", STATUS="replace")
+    DO i=1,nctrl
+      WRITE(12,*) J_normal(i)
+    END DO
+    CLOSE(12)
+    endif
    
   J_normal_mat(:,1) = J_normal(:)
   
@@ -1377,14 +1453,119 @@ module vacuum
 
   Jn_bez(:) = Jn_bez_mat(:,1)
 
-      !Debugging
-    if (my_id == 0) then
+  !Debugging
+  if (my_id == 0) then
     OPEN(UNIT=12, FILE="Jn_bez.dat", ACTION="write", STATUS="replace")
-    DO i=1,npol
+    DO i=1,n_dof_bnd*sr%n_tor
       WRITE(12,*) Jn_bez(i)
     END DO
     CLOSE(12)
+  endif
+  
+  if (reconvert_to_real) then
+
+  L_PHI:do mp = 1, n_plane
+
+    ! phi value
+    phi_v = 2.d0*PI*float(mp-1)/float(n_plane) / float(n_period)
+
+    L_MB: do m_bndelem = 1, bnd_elm_list%n_bnd_elements  ! Elements loop
+      bndelem_m = bnd_elm_list%bnd_element(m_bndelem)
+      L_MP: do m_pt = 1, nsub_ctrl  ! Poloidal points in an element
+        index = npol*(mp-1)+(m_bndelem-1)*nsub_ctrl + m_pt
+
+        if (equidistant) then
+          s = float(m_pt-1)/float(nsub_ctrl)           
+          !call basisfunctions1(s, H1, H1_s, H1_ss)
+        endif
+            !step_dist       = sr%a_phiye%step ! for distributed matrices       
+
+
+        L_IV: do i_vertex = 1, 2 ! (Loop over nodes in element m_bndelem)
+            
+          i_start = 1
+
+          L_LS:  do l_tor = 1, sr%n_tor ! STARWALL harmonics
+            f_tor    = sr%i_tor(l_tor) ! Index for STARWALL harmonics
+            !if ( (f_tor < i_tor_min) .or. (f_tor > i_tor_max) ) cycle 
+
+            i_node      = bndelem_m%vertex(i_vertex)
+                
+            i_node_bnd  = bndelem_m%bnd_vertex(i_vertex)
+
+
+            size_i = bndelem_m%size(i_vertex,:)
+                  !write(*,*) ' H1 :', H1(i_vertex,i_dof)
+
+            i_resp_1   = (bnd_node_list%bnd_node(i_node_bnd)%index_starwall(1) - 1)*sr%n_tor &
+                           + bnd_node_list%bnd_node(i_node_bnd)%n_dof*(i_start-1) &
+                           + bnd_node_list%bnd_node(i_node_bnd)%index_starwall(1) &
+                           - bnd_node_list%bnd_node(i_node_bnd)%index_starwall(1) + 1
+
+            i_resp_2   = (bnd_node_list%bnd_node(i_node_bnd)%index_starwall(1) - 1)*sr%n_tor &
+                           + bnd_node_list%bnd_node(i_node_bnd)%n_dof*(i_start-1) &
+                           + bnd_node_list%bnd_node(i_node_bnd)%index_starwall(2) &
+                           - bnd_node_list%bnd_node(i_node_bnd)%index_starwall(1) + 1
+
+            Bez2Real(index, i_resp_1 ) = Bez2Real (index, i_resp_1) + H1(i_vertex,1, m_pt) * size_i(1) &
+                                       * cos(mode_n(l_tor)*phi_v)
+            Bez2Real(index, i_resp_2 ) = Bez2Real (index, i_resp_2) + H1(i_vertex,2, m_pt) * size_i(2) &
+                                       * cos(mode_n(l_tor)*phi_v)
+
+            if (mode_n(l_tor) .ne. 0) then
+              i_resp_1   = (bnd_node_list%bnd_node(i_node_bnd)%index_starwall(1) - 1)*sr%n_tor &
+                           + bnd_node_list%bnd_node(i_node_bnd)%n_dof*(i_start) &
+                           + bnd_node_list%bnd_node(i_node_bnd)%index_starwall(1) &
+                           - bnd_node_list%bnd_node(i_node_bnd)%index_starwall(1) + 1
+
+              i_resp_2   = (bnd_node_list%bnd_node(i_node_bnd)%index_starwall(1) - 1)*sr%n_tor &
+                           + bnd_node_list%bnd_node(i_node_bnd)%n_dof*(i_start) &
+                           + bnd_node_list%bnd_node(i_node_bnd)%index_starwall(2) &
+                           - bnd_node_list%bnd_node(i_node_bnd)%index_starwall(1) + 1
+
+
+              Bez2Real(index, i_resp_1 ) = Bez2Real (index, i_resp_1) + H1(i_vertex,1, m_pt) * size_i(1) &
+                                         * sin(mode_n(l_tor)*phi_v)
+              Bez2Real(index, i_resp_2 ) = Bez2Real (index, i_resp_2) + H1(i_vertex,2, m_pt) * size_i(2) &
+                                         * sin(mode_n(l_tor)*phi_v)
+            endif
+
+            if (mode_n(l_tor) .eq. 0) then
+              i_start = i_start + 1
+            else
+              i_start = i_start + 2
+            end if
+
+                                  
+    !              if (i_resp>=sr%a_ey_pol%ind_start .AND. i_resp<=sr%a_ey_pol%ind_end) then
+
+            ! is_c = is_c_JOREK(l_tor)
+            !  itor = itor_fourier(l_tor)
+              
+            ! if (is_c) then
+            ! else              
+            ! endif
+
+            enddo L_LS
+          enddo L_IV
+        enddo L_MP
+      enddo L_MB
+    enddo L_PHI
+
+    do i = 1,nctrl
+      Jn_back2real(i) = sum( Bez2Real(i,:) * Jn_bez(:) )
+    enddo
+
+      
+    if (my_id == 0) then
+    OPEN(UNIT=12, FILE="Jn_back2real.dat", ACTION="write", STATUS="replace")
+    DO i=1,nctrl
+      WRITE(12,*) Jn_back2real(i)
+    END DO
+    CLOSE(12)
     endif
+
+  endif
 
   end subroutine Jn_output
  
@@ -1445,18 +1626,20 @@ module vacuum
     
     !<----------------Local variables ----------------------------
     integer :: itor      !< number of harmonic in realspace convention
-    integer :: jphi, k, i_start, i_end
+    integer :: jphi, k, i_start, i_end, mode_n(sr%n_tor)
     real*8  :: phi       
     logical :: is_c      !< T = cos, F = sin
     
     if (.not. allocated(fourier)) allocate(fourier(npol,ndim))
+
+    !< Get the right mode number
+
+    mode_n = mode_number(sr%i_tor)
+
     !< calculate real harmonics from JOREK input
     itor = itor_fourier(itor_J)
     is_c = is_c_JOREK(itor_J)
-    !if (my_id == 0) then
-   ! write(*,*) 'itor which should be 1', itor
-   ! write(*,*) 'is_c ', is_c 
-   ! endif
+
     fourier=0.d0
     
   !  write(*,*) ' itor_J = ', itor_J, ', itor = ', itor, ', is_c = ', is_c, ', nharm(itor) = ', nharm(itor)
@@ -1466,17 +1649,16 @@ module vacuum
        i_start = (jphi-1)*npol + 1
        i_end   =  jphi   *npol
        if(is_c) then
-          fourier(:,:)   = fourier(:,:) + 2*cos(phi * sr%i_tor(itor) )/ntor_f * f(i_start:i_end,:)
+          fourier(:,:)   = fourier(:,:) + 2*cos(phi * mode_n(itor) )/ntor_f * f(i_start:i_end,:)
        else
-          fourier(:,:)   = fourier(:,:) - 2*sin(phi * sr%i_tor(itor) )/ntor_f * f(i_start:i_end,:)
+          fourier(:,:)   = fourier(:,:) - 2*sin(phi * mode_n(itor) )/ntor_f * f(i_start:i_end,:)
           ! minus from the JOREK convention, phi has to be given in realspace convention
       end if
    end do
 
-   if (sr%i_tor(itor)==0) fourier=fourier/2.d0
+   if (mode_n(itor)==0) fourier=fourier/2.d0
 
   end subroutine calc_fourier_coeff_single
-
 
 
   subroutine realspace2bezier(bez, f, ndim, nsub, equidistant, node_list, element_list)
@@ -1523,6 +1705,7 @@ module vacuum
     subseq = subseq +1
     
     if (equidistant) then
+        write(*,*) 'realspace2bezier: Using equistant points'
         if (ALLOCATED(x)) deallocate(x)
         if (ALLOCATED(w)) deallocate(w)
         if (ALLOCATED(H_g)) deallocate(H_g)
@@ -1536,6 +1719,7 @@ module vacuum
         H_g(j,:,:) = H                        ! basis function at Gaussian points       
       end do
     else
+        write(*,*) 'realspace2bezier: Using Gauss points'
         if (ALLOCATED(x)) deallocate(x)
         if (ALLOCATED(w)) deallocate(w)
         if (ALLOCATED(H_g)) deallocate(H_g)
@@ -1586,7 +1770,8 @@ module vacuum
       !--------------- Interpolate function using Gauss points ------------------------
       ! write(*,*) 'In element loop'
       ! write(6,*) 'In element loop'
-      do k = 1, nsub
+    if (equidistant) then
+     do k = 1, nsub
         j = k + nsub*(ielm-1)
         integral(i1, :) =  integral(i1, :) + (H_g(k,1,1)*f(j,:) + H_g(k+1,1,1)*f(subseq(j),:))/2 * sz(1,1)* w(k)
         integral(i2, :) =  integral(i2, :) + (H_g(k,1,2)*f(j,:) + H_g(k+1,1,2)*f(subseq(j),:))/2 * sz(1,2)* w(k) 
@@ -1595,7 +1780,17 @@ module vacuum
       enddo
       ! write(*,*) 'In element loop, after nsub loop'
       ! write(6,*) 'In element loop, after nsub loop'
-    enddo
+    else
+      do k = 1, nsub
+        j = k + nsub*(ielm-1)
+        integral(i1, :) =  integral(i1, :) + H_g(k,1,1)*f(j,:) * sz(1,1)* w(k)
+        integral(i2, :) =  integral(i2, :) + H_g(k,1,2)*f(j,:)  * sz(1,2)* w(k) 
+        integral(i3, :) =  integral(i3, :) + H_g(k,2,1)*f(j,:)  * sz(2,1)* w(k) 
+        integral(i4, :) =  integral(i4, :) + H_g(k,2,2)*f(j,:)  * sz(2,2)* w(k) 
+      enddo
+    endif
+
+  enddo
     ! write(*,*) 'After element loop'
     ! write(6,*) 'After element loop'
 
@@ -1627,10 +1822,14 @@ module vacuum
 
 
   ! --- Routine to determine if which fourier mode corresponds to JOREK
-  pure integer function itor_fourier(itor_J)
+  integer function itor_fourier(itor_J)
   
     integer, intent(in) :: itor_J      ! --- mode in JOREK counting
-    if (sr%i_tor(1) .eq. 0 ) then
+    integer             :: mode_n(sr%n_tor)
+    
+    mode_n = mode_number(sr%i_tor)
+
+    if (mode_n(1) .eq. 0 ) then
       itor_fourier = itor_J/2 + 1   
     else
       itor_fourier = (itor_J+1)/2
@@ -1640,10 +1839,14 @@ module vacuum
   end function itor_fourier
 
     ! --- Routine to determine if JOREK mode is sin or cos
-  pure logical function is_c_JOREK(itor_J)
+  logical function is_c_JOREK(itor_J)
   
     integer, intent(in) :: itor_J      ! --- mode in JOREK counting
-    if (sr%i_tor(1) .eq. 0 ) then
+    integer             :: mode_n(sr%n_tor)
+
+    mode_n = mode_number(sr%i_tor)
+
+    if (mode_n(1) .eq. 0 ) then
       is_c_JOREK = mod(itor_J,2)==0
       if (itor_J==1) is_c_JOREK = .true.
     else
@@ -1658,15 +1861,18 @@ module vacuum
   integer :: npol, ntor_f, dim, nctrl, n_modes
   real*8 :: phi, real_func(nctrl, n_modes)
   integer :: i, j, k
+  integer :: mode_n(sr%n_tor)
+
+  mode_n = mode_number(sr%i_tor)
     
   do i = 1, npol
     do k = 1, ntor_f
       phi = float(k-1)/ntor_f*2*pi
       do j = 1, n_modes
         if (is_c_JOREK(j)) then
-          real_func ((k-1)*npol+1:k*npol,j) = real_func((k-1)*npol+1:k*npol,j) + fourier(:,j) * cos(phi*sr%i_tor(j))
+          real_func ((k-1)*npol+1:k*npol,j) = real_func((k-1)*npol+1:k*npol,j) + fourier(:,j) * cos(phi*mode_n(j))
         else
-         real_func ((k-1)*npol+1:k*npol,j) = real_func((k-1)*npol+1:k*npol,j) - fourier(:,j) * sin(phi*sr%i_tor(j))
+         real_func ((k-1)*npol+1:k*npol,j) = real_func((k-1)*npol+1:k*npol,j) - fourier(:,j) * sin(phi*mode_n(j))
         end if
       end do     
     end do
@@ -1699,4 +1905,28 @@ module vacuum
     JOREK_index_1mode  =  node_list%bnd_node(i_v)%index_starwall(i_dof)
 
   end function JOREK_index_1mode
+
+
+! --- This function adapts the index in the sr%i_tor array (which, for e.g. n_tor in the STARWALL input equal to 0,1,2
+! will contain indexes 1,2,3,4,5 where 1 is the axisymmetric one and the others are cosine and sine for each harmonic)
+! -------> and CONVERTS it into the actual mode number n
+  pure function mode_number(JOREK_harmonics) result (mode_n)
+  implicit none
+  integer, DIMENSION(:), intent(in) :: JOREK_harmonics
+  integer, DIMENSION(size(JOREK_harmonics)) :: mode_n
+  integer             :: i
+  
+  do i = 1, sr%n_tor
+
+    if (JOREK_harmonics(i) .eq. 1 ) mode_n(i) = 0
+    
+    if (mod(JOREK_harmonics(i),2) .eq. 0) then
+      mode_n(i) = JOREK_harmonics(i)/2  ! Harmonic number is even
+    else
+      mode_n(i) = (JOREK_harmonics(i) -1)/2
+    endif
+  enddo
+
+  end function mode_number
+
  end module vacuum
