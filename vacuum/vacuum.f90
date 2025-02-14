@@ -1208,11 +1208,17 @@ module vacuum
   real*8                :: k_size,vec_inside(2), grad_t(2), sign_out, phi(n_plane), G(4, n_degrees), s
   type(type_bnd_element):: bndelem_m
   real*8, allocatable   :: Jn_bez(:) , Jn_bez_mat(:,:), Bez2Real(:,:)                   !< output matrix with Bezier
-  logical               :: reconvert_to_real, is_c
+  logical               :: reconvert_to_real, is_c, full_Jn
   integer               :: mode_n(sr%n_tor)
+
+write(*,*) 'Inside Jn_output'
 
   ! Reconvert for debugging?
     reconvert_to_real = .true.
+
+  ! Compute full current or implement harmonic beat frequency mitigation?
+
+   full_Jn = .true.
 
   ! Number of total control points on the JOREK surface
     if (equidistant) then
@@ -1314,12 +1320,9 @@ module vacuum
                 endif        
               enddo
             enddo
-
-
+            
         else
-        
-          
-        
+                
         endif
       enddo
     enddo
@@ -1348,11 +1351,26 @@ module vacuum
       phi   (mp)      = 2.d0*PI*float(mp-1)/float(n_plane) / float(n_period)
     enddo
 
+    if (full_Jn) then
 
-    ! Print field points
+      ! --- Computation of full normal current
 
+      do mp = 1, n_plane
 
-      
+        J_normal_temp((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = ((zj((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) * &
+                                                       psi_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)) + &
+                                                       + R(:)**2.d0 * P0_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)) &
+                                                      /sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out
+      enddo
+
+      do mp = 1,n_plane ! Fill up the extended Jnorm by first going along the poloidal angle and then proceeding to next poloidal plane (along phi)
+
+        J_normal( (m_bndelem-1)*nsub_ctrl+1+(mp-1)*npol : m_bndelem*nsub_ctrl+(mp-1)*npol ) = J_normal_temp((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)                          
+
+      enddo
+
+    else
+
     ! ---- Implementation of Jn = 1/Bphi ( Bn(n=0) * Jphi + Jphi(n=0) * Bn )
 
     ! Debugging
@@ -1394,7 +1412,8 @@ module vacuum
     ! Loop over poloidal direction first, then toroidal
     do mp=1,n_plane
       J_normal_temp((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = (zj_0((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) * psi_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + &
-                                                  psi_s_0((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)*zj((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + &
+                                                  psi_s_0((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)*zj((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)  &
+                                                  - zj_0((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) * psi_s_0((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + &
                                                   R(:)**2.d0 * P0_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)) /sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out
     enddo
 
@@ -1408,6 +1427,9 @@ module vacuum
     !   WRITE(12,*) J_normal_temp(i)
     ! END DO
     ! CLOSE(12)
+
+    endif
+
     do mp = 1,n_plane
       R_global( (m_bndelem-1)*nsub_ctrl+1+(mp-1)*npol : m_bndelem*nsub_ctrl+(mp-1)*npol ) = R(:)                                            
       Z_global( (m_bndelem-1)*nsub_ctrl+1+(mp-1)*npol : m_bndelem*nsub_ctrl+(mp-1)*npol ) = Z(:)
@@ -1439,7 +1461,7 @@ module vacuum
 
     !Debugging
     if (my_id == 0) then
-    OPEN(UNIT=12, FILE="Jn_tot_array.dat", ACTION="write", STATUS="replace")
+    OPEN(UNIT=12, FILE="Jn_real.dat", ACTION="write", STATUS="replace")
     DO i=1,nctrl
       WRITE(12,*) J_normal(i)
     END DO
@@ -1566,7 +1588,7 @@ module vacuum
     endif
 
   endif
-
+ write(*,*) 'Finished Jn_output'
   end subroutine Jn_output
  
   subroutine fourier(A, nctrl, ntor_f, nsub_ctrl, ndim, phi_ctrl,equidistant, global ,my_id, node_list, element_list)
