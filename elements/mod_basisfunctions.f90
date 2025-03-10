@@ -94,7 +94,7 @@ end subroutine basisfunctions_1D_1
   
 !> Subroutine which defines the basis functions in one dimension with first and second derivatives
 pure subroutine basisfunctions_1D_2(s,H,H_s,H_ss)
-  real*8, intent(in)  :: s                         !< s-coordinate in the element (in [0,1])
+  real*8, intent(in)  :: s                      !< s-coordinate in the element (in [0,1])
   real*8, intent(out) :: H   (2,(n_order+1)/2)  !< Basis functions
   real*8, intent(out) :: H_s (2,(n_order+1)/2)  !< Basis functions derived with respect to s
   real*8, intent(out) :: H_ss(2,(n_order+1)/2)  !< Basis functions derived two times with respect to s

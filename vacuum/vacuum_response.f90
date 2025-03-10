@@ -593,6 +593,13 @@ module vacuum_response
       
       sr%nd_bez = read_intparam_parallel(filehandle, 'nd_bez', disp)
 
+      if (CARIDDI_mode) then ! .and. add version 7 if clause
+        sr%n_pts_real_w = read_intparam_parallel(filehandle, 'n_pts_real_w', disp)
+        sr%n_pts_real_J = read_intparam_parallel(filehandle, 'n_pts_real_J', disp)
+        sr%n_electrode_w = read_intparam_parallel(filehandle, 'n_electrode_w', disp)
+        sr%n_electrode_J = read_intparam_parallel(filehandle, 'n_electrode_J', disp)
+      end if
+
       if ( sr%file_version >= 5 ) then
         sr%nv       = read_intparam_parallel(filehandle, 'nv',        disp)
         sr%n_points = read_intparam_parallel(filehandle, 'n_points',  disp)
@@ -702,6 +709,8 @@ module vacuum_response
 
     call MPI_BCAST(sr%n_w,    1, MPI_INTEGER, 0, MPI_COMM_WORLD, err)
     call MPI_BCAST(sr%nd_bez, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, err)
+    call MPI_BCAST(sr%n_pts_real_w, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, err)  
+    call MPI_BCAST(sr%n_pts_real_J, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, err)
     call MPI_bcast(sr%ind_start_coils,     1, MPI_INTEGER,  0, MPI_COMM_WORLD, err)
     call MPI_bcast(sr%ncoil,                   1, MPI_INTEGER,  0, MPI_COMM_WORLD, err)
 
@@ -719,7 +728,14 @@ module vacuum_response
           loc_start=sr%ind_start_coils, loc_len=sr%ncoil, loc_row=.false. )
       sr%ind_start_coils = 1
     end if
-      
+
+    if (my_id == 0 .and. CARIDDI_mode) then ! use read_array_not_distr ?
+      call read_array_not_distr(filehandle, 'ielsphi_w', (/sr%n_pts_real_w,3/), disp, float2d=sr%ielsphi_real_w)
+      call read_array_not_distr(filehandle, 'ielsphi_J', (/sr%n_pts_real_J,3/), disp, float2d=sr%ielsphi_real_J)
+      call read_array_not_distr(filehandle, 'Jmat_w', (/sr%n_electrode_w,sr%n_pts_real_w/), disp, float2d=sr%Jmat_real_w)
+      call read_array_not_distr(filehandle, 'Jmat_J', (/sr%n_electrode_J,sr%n_pts_real_J/), disp, float2d=sr%Jmat_real_J)
+    end if   
+
     if(my_id == 0 .and. .not. CARIDDI_mode) then
      call read_array_not_distr(filehandle, 'xyzpot_w', (/sr%npot_w,3/), disp, float2d=sr%xyzpot_w)
      call read_array_not_distr(filehandle, 'jpot_w',   (/sr%ntri_w,3/), disp, int2d=sr%jpot_w)
@@ -1123,6 +1139,8 @@ module vacuum_response
     call MPI_bcast(sr%file_version,            1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
     call MPI_bcast(sr%n_bnd,                   1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
     call MPI_bcast(sr%nd_bez,                  1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
+    call MPI_bcast(sr%n_pts_real_w,            1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
+    call MPI_bcast(sr%n_pts_real_J,            1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
     call MPI_bcast(sr%npot_w,                  1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
     call MPI_bcast(sr%n_w,                     1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
     call MPI_bcast(sr%ntri_w,                  1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
@@ -2329,6 +2347,7 @@ module vacuum_response
       end if
       
       if ( .not. allocated(dwall_curr) ) then
+      write(*,*) 'Allocating dwall_curr with', n_wall_curr
         allocate( dwall_curr(n_wall_curr) )
         do k = 1, n_wall_curr
           dwall_curr(:) = 0.d0!- sum( sr%a_ye(k,:) * dpsibnd_vec(:) )
@@ -2538,8 +2557,9 @@ module vacuum_response
 
     !> WARNING: The following computation of dwall_curr_2 contains the term
     !!          dwall_curr which refers to the previous time-step
+    write(*,*) 'n_wall_curr', n_wall_curr
     do k = 1, n_wall_curr
-
+    
       ! --- contribution from not distributed matrices
       dwall_curr_2(k) = response_d_b(k) * (wall_curr(k) - Y_coils0(k)) &
          + response_d_c(k) * dwall_curr(k)

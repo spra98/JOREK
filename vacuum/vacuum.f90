@@ -89,6 +89,10 @@ module vacuum
     logical :: initialized            = .false.
     integer :: n_bnd                  = -1
     integer :: nd_bez                 = -1
+    integer :: n_pts_real_w           = -1
+    integer :: n_pts_real_J           = -1
+    integer :: n_electrode_w           = -1
+    integer :: n_electrode_J           = -1
     integer :: ncoil                  = -1
     integer :: npot_w                 = -1
     integer :: n_w                    = -1
@@ -138,6 +142,10 @@ module vacuum
     type(t_distrib_mat)  :: a_id
     type(t_distrib_mat)  :: s_ww
     type(t_distrib_mat)  :: s_ww_inv
+    real*8, allocatable  :: ielsphi_real_w(:,:)
+    real*8, allocatable  :: ielsphi_real_J(:,:)
+    real*8, allocatable  :: Jmat_real_w(:,:)
+    real*8, allocatable  :: Jmat_real_J(:,:)
     real*8,  allocatable :: xyzpot_w(:,:)
     real*8,  allocatable :: phi0_w(:,:)   !< Toroidal net wall current potentials
     integer, allocatable :: jpot_w(:,:)
@@ -471,6 +479,10 @@ module vacuum
     ! --- Initialize some variables.
     sr%n_bnd  = 0
     sr%nd_bez = 0
+    sr%n_pts_real_w = 0
+    sr%n_pts_real_J = 0
+    sr%n_electrode_w = 0
+    sr%n_electrode_J = 0
     sr%ncoil  = 0
     sr%npot_w = 0
     sr%n_w    = 0
@@ -1173,7 +1185,7 @@ module vacuum
   end subroutine print_distr
 
 
-  subroutine Jn_output(node_list, element_list, bnd_elm_list, bnd_node_list, equidistant, my_id, i_tor_min, i_tor_max)
+  subroutine Jn_output(node_list, element_list, bnd_elm_list, bnd_node_list, mapping, my_id, i_tor_min, i_tor_max)
 
   use constants
   use basis_at_gaussian
@@ -1181,6 +1193,7 @@ module vacuum
   use mod_parameters, only: n_degrees
   use data_structure
   use phys_module
+  !use vacuum_response
 
   implicit none
   ! Input, output variables
@@ -1188,7 +1201,7 @@ module vacuum
   type (type_element_list),     intent(in)    :: element_list
   type (type_bnd_element_list), intent(in)    :: bnd_elm_list   
   type (type_bnd_node_list),    intent(in)    :: bnd_node_list
-  logical,                      intent(in)    :: equidistant
+  character(len=*),             intent(in)    :: mapping
   integer,                      intent(in)    :: my_id, i_tor_min, i_tor_max
 
 
@@ -1201,38 +1214,64 @@ module vacuum
   real*8, allocatable   :: zj(:), psi_s(:), rho(:), psi_s_mat(:,:), zj_mat(:,:)
   real*8, allocatable   :: T0(:), rho_s(:), T0_s(:), P0_s(:)
   real*8, allocatable   :: fourier_psi_s_0(:,:), fourier_zj_0(:,:), psi_s_0(:), psi_s_0_mat(:,:), zj_0(:), zj_0_mat(:,:)
-  real*8, allocatable   :: J_normal_temp(:), J_normal(:), J_normal_mat(:,:), Jn_back2real(:)
-  real*8                :: phi_v, size_i(2)
-  integer               :: k_vertex, k_dof, k_node, k_dir, m_bndelem, i ,j, index, i_vertex, i_node, i_start, i_node_bnd, i_dof
-  integer               :: nctrl, nsub_ctrl, npol, mp, in, l_tor, f_tor, i_resp_1, i_resp_2, m_pt, itor
+  real*8, allocatable   :: J_normal_temp(:), J_normal(:), J_normal_mat(:,:), Jn_back2real(:), Jn_CAR(:)
+  real*8                :: phi_v, size_i(2), phi_c
+  integer               :: k_vertex, k_dof, k_node, k_dir, m_bndelem, m_bndelem_arr(1), i ,j, index, i_vertex, i_node, i_start, i_node_bnd, i_dof
+  integer               :: nctrl, nsub_ctrl, npol, mp, in, l_tor, f_tor, i_resp_1, i_resp_2, m_pt, itor, npts_elm, npts_CAR, i_CAR_glob
   real*8                :: k_size,vec_inside(2), grad_t(2), sign_out, phi(n_plane), G(4, n_degrees), s
   type(type_bnd_element):: bndelem_m
   real*8, allocatable   :: Jn_bez(:) , Jn_bez_mat(:,:), Bez2Real(:,:)                   !< output matrix with Bezier
   logical               :: reconvert_to_real, is_c, full_Jn
   integer               :: mode_n(sr%n_tor)
+  real*8, allocatable   :: iel_real(:), s_real(:), phi_real(:), s_elm(:), phi_elm(:)
+  integer, allocatable  :: iel_real_int(:), ielm_indexes(:)  
+  real*8, allocatable   :: H1_CAR(:,:,:), H1_CAR_s(:,:,:), HZ_CAR(:,:)
 
-write(*,*) 'Inside Jn_output'
+  write(*,*) 'Inside Jn_output'
+
 
   ! Reconvert for debugging?
-    reconvert_to_real = .true.
+  reconvert_to_real = .false.
 
   ! Compute full current or implement harmonic beat frequency mitigation?
 
-   full_Jn = .true.
+  full_Jn = .true.
 
+
+  select case (mapping)
   ! Number of total control points on the JOREK surface
-    if (equidistant) then
+    case ('equidistant')
       nsub_ctrl = 3
       nctrl = bnd_elm_list%n_bnd_elements * nsub_ctrl * n_plane
-    else 
+
+    case ('CARIDDI') 
+
+      if (ALLOCATED(iel_real)) deallocate(iel_real)
+      if (ALLOCATED(s_real)) deallocate(s_real)
+      if (ALLOCATED(phi_real)) deallocate(phi_real)
+      if (ALLOCATED(iel_real_int)) deallocate(iel_real_int)  
+      allocate(iel_real(sr%n_pts_real_J), s_real(sr%n_pts_real_J), phi_real(sr%n_pts_real_J), iel_real_int(sr%n_pts_real_J))
+
+      iel_real = sr%ielsphi_real_J(:,1)
+      iel_real_int = int(iel_real)
+      s_real   = sr%ielsphi_real_J(:,2)
+      phi_real = sr%ielsphi_real_J(:,3)
+      npts_CAR = size(s_real)
+
+      if (allocated(Jn_CAR)) deallocate(Jn_CAR)
+      allocate(Jn_CAR(npts_CAR))
+      Jn_CAR = 0.d0
+    
+    case ('gauss') 
       nsub_ctrl = n_gauss
       nctrl = bnd_elm_list%n_bnd_elements * nsub_ctrl * n_plane
-    endif
+      npol  = nctrl / n_plane
+  end select
 
-    npol  = nctrl / n_plane
+    
 
-    mode_n = mode_number(sr%i_tor)
-
+    mode_n = mode_number(sr%i_tor) ! N.B. n_tor = number of JOREK modes, differs from sr%n_tor which is the number of freeb modes
+ 
     if (ALLOCATED(zj)) deallocate(zj)
     if (ALLOCATED(psi_s)) deallocate(psi_s)
     if (ALLOCATED(zj_mat)) deallocate(zj_mat)
@@ -1263,33 +1302,87 @@ write(*,*) 'Inside Jn_output'
     if (ALLOCATED(Z_global)) deallocate(Z_global)
     if (ALLOCATED(phi_global)) deallocate(phi_global)
 
-    
+    select case (mapping)
+    case ('equidistant') 
     allocate(zj(nsub_ctrl*n_plane), psi_s(nsub_ctrl*n_plane), psi_s_mat(nsub_ctrl*n_plane,1), &
     zj_mat(nsub_ctrl*n_plane,1), rho(nsub_ctrl*n_plane), T0(nsub_ctrl*n_plane), &
     rho_s(nsub_ctrl*n_plane) , T0_s(nsub_ctrl*n_plane) , P0_s(nsub_ctrl*n_plane), fourier_psi_s_0(nsub_ctrl,1), &
     fourier_zj_0(nsub_ctrl,1),  psi_s_0(nsub_ctrl*n_plane)  , zj_0(nsub_ctrl*n_plane), &
     psi_s_0_mat(nsub_ctrl*n_plane,1), zj_0_mat(nsub_ctrl*n_plane,1), Jn_back2real(nctrl), &
-    R(nsub_ctrl), Z(nsub_ctrl), R_s(nsub_ctrl), Z_s(nsub_ctrl), &
-    R_global(nctrl), Z_global(nctrl), phi_global(nctrl), &
+    R(nsub_ctrl), Z(nsub_ctrl), R_s(nsub_ctrl), Z_s(nsub_ctrl), R_global(nctrl), Z_global(nctrl), phi_global(nctrl), &
     J_normal_temp(nsub_ctrl*n_plane) , J_normal(nctrl), J_normal_mat(nctrl,1), Jn_bez(n_dof_bnd*sr%n_tor) , Jn_bez_mat(n_dof_bnd*sr%n_tor,1), Bez2Real(nctrl, n_dof_bnd*sr%n_tor)   )
 
       
    J_normal = 0.d0 ; Jn_bez = 0.d0; Jn_bez_mat = 0.d0; J_normal_mat=0.d0 ; Bez2Real = 0.d0; Jn_back2real=0.d0
    R_global = 0.d0; Z_global = 0.d0; phi_global = 0.d0
 
+    case ('gauss') 
+    allocate(zj(nsub_ctrl*n_plane), psi_s(nsub_ctrl*n_plane), psi_s_mat(nsub_ctrl*n_plane,1), &
+    zj_mat(nsub_ctrl*n_plane,1), rho(nsub_ctrl*n_plane), T0(nsub_ctrl*n_plane), &
+    rho_s(nsub_ctrl*n_plane) , T0_s(nsub_ctrl*n_plane) , P0_s(nsub_ctrl*n_plane), fourier_psi_s_0(nsub_ctrl,1), &
+    fourier_zj_0(nsub_ctrl,1),  psi_s_0(nsub_ctrl*n_plane)  , zj_0(nsub_ctrl*n_plane), &
+    psi_s_0_mat(nsub_ctrl*n_plane,1), zj_0_mat(nsub_ctrl*n_plane,1), Jn_back2real(nctrl), &
+    R(nsub_ctrl), Z(nsub_ctrl), R_s(nsub_ctrl), Z_s(nsub_ctrl), R_global(nctrl), Z_global(nctrl), phi_global(nctrl), &
+    J_normal_temp(nsub_ctrl*n_plane) , J_normal(nctrl), J_normal_mat(nctrl,1), Jn_bez(n_dof_bnd*sr%n_tor) , Jn_bez_mat(n_dof_bnd*sr%n_tor,1), Bez2Real(nctrl, n_dof_bnd*sr%n_tor)   )
+
+      
+   J_normal = 0.d0 ; Jn_bez = 0.d0; Jn_bez_mat = 0.d0; J_normal_mat=0.d0 ; Bez2Real = 0.d0; Jn_back2real=0.d0
+   R_global = 0.d0; Z_global = 0.d0; phi_global = 0.d0
+
+   end select
+   
   !--- go through the boundary elements
   do m_bndelem = 1, bnd_elm_list%n_bnd_elements
     
-    bndelem = bnd_elm_list%bnd_element(m_bndelem)
-    elm_k   = element_list%element(bndelem%element)
- 
+    bndelem = bnd_elm_list%bnd_element(m_bndelem) ! Type bnd_element
+    elm_k   = element_list%element(bndelem%element) ! Type element
+    
+    select case (mapping)
     !--- calculate values at gaussian points on the element
+    case('gauss')
     R     = 0.d0;      Z = 0.d0;   R_s = 0.d0;   Z_s = 0.d0      
     zj    = 0.d0;      psi_s = 0.d0;   rho = 0.d0;   T0 = 0.d0 ; 
     rho_s = 0.d0;      T0_s = 0.d0;  P0_s = 0.d0 ; 
     fourier_psi_s_0 = 0.d0 ; fourier_zj_0 = 0.d0; psi_s_0 = 0.d0; zj_0 = 0.d0 ; J_normal_temp = 0.d0
     psi_s_mat = 0.d0; zj_mat = 0.d0; psi_s_0_mat = 0.d0 ; zj_0_mat = 0.d0
-      
+    
+    case('CARIDDI')
+    ! In the case of CARIDDI, we have to first know how many points per element
+    ! Find indexes in the ielm vector
+    m_bndelem_arr(1) = m_bndelem
+    call find_loc_indexes(iel_real_int, m_bndelem_arr, ielm_indexes)
+    npts_elm = size(ielm_indexes)
+    ! Proceed with allocation
+    if (allocated(s_elm)) deallocate(s_elm)
+    if (allocated(phi_elm)) deallocate(phi_elm)
+    if (allocated(H1_CAR)) deallocate(H1_CAR)
+    if (allocated(H1_CAR_s)) deallocate(H1_CAR_s)
+    if (allocated(R)) deallocate(R)
+    if (allocated(Z)) deallocate(Z)
+    if (allocated(R_s)) deallocate(R_s)
+    if (allocated(Z_s)) deallocate(Z_s)
+    if (allocated(HZ_CAR)) deallocate(HZ_CAR)
+    if (allocated(psi_s)) deallocate(psi_s)
+    if (allocated(zj)) deallocate(zj)
+    if (allocated(rho)) deallocate(rho)
+    if (allocated(rho_s)) deallocate(rho_s)
+    if (allocated(T0)) deallocate(T0)
+    if (allocated(T0_s)) deallocate(T0_s)
+    if (allocated(P0_s)) deallocate(P0_s)
+
+
+    allocate(s_elm(npts_elm), phi_elm(npts_elm), H1_CAR(2,n_degrees_1d, npts_elm), H1_CAR_s(2, n_degrees_1d, npts_elm), &
+              R(npts_elm), Z(npts_elm), R_s(npts_elm), Z_s(npts_elm), HZ_CAR(sr%n_tor, npts_elm), &
+              psi_s(npts_elm), zj(npts_elm), rho(npts_elm), rho_s(npts_elm), T0(npts_elm), T0_s(npts_elm), P0_s(npts_elm))
+
+    s_elm = 0.d0 ; phi_elm = 0.d0 ; H1_CAR = 0.d0 ; H1_CAR_s = 0.d0; R = 0.d0; Z = 0.d0; R_s = 0.d0; Z_s = 0.d0
+    HZ_CAR = 0.d0 ; psi_s = 0.d0 ; zj = 0.d0; rho=0.d0; rho_s=0.d0; T0=0.d0; T0_s=0.d0; P0_s=0.d0
+    
+    ! Find s and phi for the element
+    s_elm    = s_real(ielm_indexes)
+    phi_elm  = phi_real(ielm_indexes)
+    
+    end select 
 
     do k_vertex = 1, 2
       do k_dof = 1, 2
@@ -1298,16 +1391,16 @@ write(*,*) 'Inside Jn_output'
         k_dir    = bndelem%direction(k_vertex,k_dof)
         k_size   = bndelem%size(k_vertex,k_dof)
         node_k   = node_list%node(k_node)
-        
-        if (.not. equidistant)  then    
 
+        select case (mapping)
+          case ('gauss')     
             R  (:)   = R  (:)  + node_k%x(1,k_dir,1) * k_size * H1  (k_vertex,k_dof,:)
             Z  (:)   = Z  (:)  + node_k%x(1,k_dir,2) * k_size * H1  (k_vertex,k_dof,:)
             R_s(:)   = R_s(:)  + node_k%x(1,k_dir,1) * k_size * H1_s(k_vertex,k_dof,:)
             Z_s(:)   = Z_s(:)  + node_k%x(1,k_dir,2) * k_size * H1_s(k_vertex,k_dof,:)
 
             do mp=1,n_plane
-              do in=1,n_tor
+              do in=1,sr%n_tor
                 psi_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = psi_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,1) * k_size*H1_s(k_vertex,k_dof,:) * HZ(in,mp)
                 zj   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)   = zj   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,3) * k_size*H1(k_vertex,k_dof,:) * HZ(in,mp)
                 if (jorek_model > 200 ) then
@@ -1321,12 +1414,68 @@ write(*,*) 'Inside Jn_output'
               enddo
             enddo
             
-        else
-                
-        endif
+          case('CARIDDI')
+        
+            do i = 1, npts_elm
+              s = s_elm(i)
+              call basisfunctions1(s, H1_CAR(1:2,1:n_degrees_1d,i), H1_CAR_s(1:2,1:n_degrees_1d,i))
+            end do
+            ! All these arrays have the size of ielm_indexes. 
+            R  (:)   = R  (:)  + node_k%x(1,k_dir,1) * k_size * H1_CAR  (k_vertex,k_dof,:)
+            Z  (:)   = Z  (:)  + node_k%x(1,k_dir,2) * k_size * H1_CAR  (k_vertex,k_dof,:)
+            R_s(:)   = R_s(:)  + node_k%x(1,k_dir,1) * k_size * H1_CAR_s(k_vertex,k_dof,:)
+            Z_s(:)   = Z_s(:)  + node_k%x(1,k_dir,2) * k_size * H1_CAR_s(k_vertex,k_dof,:)
+          
+            ! Get toroidal basis functions
+            ! - note that the basis for physics variables and coordinates have opposite signs
+            do j = 1,npts_elm     
+              phi_c = -phi_elm(j)
+              if ( mode_n(1) .eq. 0) then ! First mode is n=0
+                do i=1,sr%n_tor,2
+                  if (sr%i_tor(i) .eq. 1) then 
+                    HZ_CAR(i,j)    = 1.d0
+                  else ! If we are at 3,5,7...
+                    HZ_CAR(i-1,j) = cos(mode_n(i-1)  *phi_c)
+                    HZ_CAR(i,j)= sin(mode_n(i)*phi_c)
+                  end if
+                end do
+              else ! n_tor is even because we are without n=0
+                do i=2,sr%n_tor,2
+                  HZ_CAR(i-1,j) = cos(mode_n(i-1)  *phi_c)
+                  HZ_CAR(i,j)= sin(mode_n(i)*phi_c)
+                end do
+              end if
+            end do
+
+        !Debugging
+        OPEN(UNIT=12, FILE="HZ_CAR.dat", ACTION="write", STATUS="replace")
+        DO i=1,npts_elm
+          WRITE(12,*) HZ_CAR(1,i)
+         END DO
+        CLOSE(12)
+           
+
+            ! Right now the values are placed sequentially in these local arrays for psi, zj, rho, T0
+            ! The order is the one the ielm_indexes are placed at!
+            do i= 1,npts_elm
+              do in = 1,sr%n_tor
+                psi_s(i) =  psi_s(i) + node_k%values(sr%i_tor(in),k_dir,1) * k_size*H1_CAR_s(k_vertex,k_dof,i) * HZ_CAR(in,i)
+                zj(i)    =  zj(i) + node_k%values(sr%i_tor(in),k_dir,3) * k_size*H1_CAR_s(k_vertex,k_dof,i) * HZ_CAR(in,i)
+                if (jorek_model > 200 ) then
+                  rho  (i) = rho  (i) + node_k%values(sr%i_tor(in),k_dir,5) * k_size*  H1_CAR(k_vertex,k_dof,i) * HZ_CAR(in,i)
+                  rho_s(i) = rho_s(i) + node_k%values(sr%i_tor(in),k_dir,5) * k_size*H1_CAR_s(k_vertex,k_dof,i) * HZ_CAR(in,i)
+                  T0   (i) = T0   (i) + node_k%values(sr%i_tor(in),k_dir,6) * k_size*  H1_CAR(k_vertex,k_dof,i) * HZ_CAR(in,i)
+                  T0_s (i) = T0_s (i) + node_k%values(sr%i_tor(in),k_dir,6) * k_size*H1_CAR_s(k_vertex,k_dof,i) * HZ_CAR(in,i)
+                else
+                  rho = 1.d0; rho_s = 0.d0; T0 = 0.d0; T0_s = 0.d0 
+                endif 
+              end do
+            end do
+           
+         end select
       enddo
     enddo
-
+    
     !--- Find out correct sign of the normal (it has to point outwards the domain)
     !---------------------------------------------------------------------------------- 
     ! --- Calculate an inside point on the element to calculate the
@@ -1343,135 +1492,145 @@ write(*,*) 'Inside Jn_output'
     vec_inside = (/ R_c - R(2), Z_c - Z(2) /)       ! vector pointing towards the domain
     grad_t     = (/ -Z_s(2) , R_s(2) /)     ! gradient of the coordinate t (normal to the boundary here)
     sign_out   = -1.d0 * sign( 1.d0, ( vec_inside(1)*grad_t(1) + vec_inside(2)*grad_t(2) ) )  
-      !--------------------------------------------------------------------------------
-      
-    do mp=1, n_plane
-      P0_s ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)     = T0((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) * rho_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + &
-                                                    T0_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) * rho((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)
-      phi   (mp)      = 2.d0*PI*float(mp-1)/float(n_plane) / float(n_period)
-    enddo
+    !--------------------------------------------------------------------------------
+    select case (mapping)
+      case ('gauss')
+        do mp=1, n_plane
+          P0_s ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)     = T0((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) * rho_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + &
+                                                        T0_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) * rho((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)
+          phi   (mp)      = 2.d0*PI*float(mp-1)/float(n_plane) / float(n_period)
+        enddo
 
-    if (full_Jn) then
+        if (full_Jn) then
 
-      ! --- Computation of full normal current
+          ! --- Computation of full normal current
 
-      do mp = 1, n_plane
+          do mp = 1, n_plane
 
-        J_normal_temp((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = ((zj((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) * &
-                                                       psi_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)) + &
-                                                       + R(:)**2.d0 * P0_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)) &
-                                                      /sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out
-      enddo
+            J_normal_temp((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = ((zj((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) * &
+                                                          psi_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)) + &
+                                                          + R(:)**2.d0 * P0_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)) &
+                                                          /sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out
+          enddo
 
-      do mp = 1,n_plane ! Fill up the extended Jnorm by first going along the poloidal angle and then proceeding to next poloidal plane (along phi)
+          do mp = 1,n_plane ! Fill up the extended Jnorm by first going along the poloidal angle and then proceeding to next poloidal plane (along phi)
 
-        J_normal( (m_bndelem-1)*nsub_ctrl+1+(mp-1)*npol : m_bndelem*nsub_ctrl+(mp-1)*npol ) = J_normal_temp((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)                          
+            J_normal( (m_bndelem-1)*nsub_ctrl+1+(mp-1)*npol : m_bndelem*nsub_ctrl+(mp-1)*npol ) = J_normal_temp((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)                          
 
-      enddo
+          enddo
 
-    else
+        else
 
-    ! ---- Implementation of Jn = 1/Bphi ( Bn(n=0) * Jphi + Jphi(n=0) * Bn )
+        ! ---- Implementation of Jn = 1/Bphi ( Bn(n=0) * Jphi + Jphi(n=0) * Bn )
 
-    ! Debugging
-    ! OPEN(UNIT=12, FILE="psi_s_vec.dat", ACTION="write", STATUS="replace")
-    ! DO i=1,nsub_ctrl*n_plane
-    !   WRITE(12,*) psi_s(i)
-    !  END DO
-    ! CLOSE(12)
+        ! ! Extract n=0 harmonics for field and toroidal current
+        psi_s_mat(:,1) = psi_s(:)
+        zj_mat(:,1)    = zj(:)
+        
+        call calc_fourier_coeff_single(psi_s_mat,  n_plane, nsub_ctrl, 1, 1, phi, fourier_psi_s_0, my_id  )
+        call calc_fourier_coeff_single( zj_mat, n_plane, nsub_ctrl , 1, 1, phi,  fourier_zj_0, my_id    )
+    
+        ! Re-convert the n=0 to real space
+        call fourier2realspace(fourier_psi_s_0, 1, nsub_ctrl*n_plane, nsub_ctrl, n_plane, psi_s_0_mat)
+        call fourier2realspace(fourier_zj_0, 1, nsub_ctrl*n_plane,   nsub_ctrl, n_plane,    zj_0_mat)
 
-    ! ! Extract n=0 harmonics for field and toroidal current
-    psi_s_mat(:,1) = psi_s(:)
-    zj_mat(:,1)    = zj(:)
-     
-    call calc_fourier_coeff_single(psi_s_mat,  n_plane, nsub_ctrl, 1, 1, phi, fourier_psi_s_0, my_id  )
-    call calc_fourier_coeff_single( zj_mat, n_plane, nsub_ctrl , 1, 1, phi,  fourier_zj_0, my_id    )
-   
-    ! !Debugging
-    ! OPEN(UNIT=12, FILE="fourier_psi_s_0.dat", ACTION="write", STATUS="replace")
-    ! DO i=1,nsub_ctrl
-    !   WRITE(12,*) fourier_psi_s_0(i,1)
-    !  END DO
-    ! CLOSE(12)
+        !    !Debugging
+        ! OPEN(UNIT=12, FILE="psi_s_0.dat", ACTION="write", STATUS="replace")
+        ! DO i=1,nsub_ctrl*n_plane
+        !   WRITE(12,*) psi_s_0_mat(i,1)
+        !  END DO
+        ! CLOSE(12)
 
-    ! Re-convert the n=0 to real space
-    call fourier2realspace(fourier_psi_s_0, 1, nsub_ctrl*n_plane, nsub_ctrl, n_plane, psi_s_0_mat)
-    call fourier2realspace(fourier_zj_0, 1, nsub_ctrl*n_plane,   nsub_ctrl, n_plane,    zj_0_mat)
+        psi_s_0(:) = psi_s_0_mat(:,1) ; zj_0(:) = zj_0_mat(:,1)
 
-    !    !Debugging
-    ! OPEN(UNIT=12, FILE="psi_s_0.dat", ACTION="write", STATUS="replace")
-    ! DO i=1,nsub_ctrl*n_plane
-    !   WRITE(12,*) psi_s_0_mat(i,1)
-    !  END DO
-    ! CLOSE(12)
+        ! Output variables are arrays in real space, on the whole toroidal "slice" identified by the nsub_ctrl poloidal points
 
-    psi_s_0(:) = psi_s_0_mat(:,1) ; zj_0(:) = zj_0_mat(:,1)
+        ! Loop over poloidal direction first, then toroidal
+        do mp=1,n_plane
+          J_normal_temp((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = (zj_0((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) * psi_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + &
+                                                      psi_s_0((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)*zj((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)  &
+                                                      - zj_0((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) * psi_s_0((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + &
+                                                      R(:)**2.d0 * P0_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)) /sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out
+        enddo
 
-    ! Output variables are arrays in real space, on the whole toroidal "slice" identified by the nsub_ctrl poloidal points
+        do mp = 1,n_plane
+          J_normal( (m_bndelem-1)*nsub_ctrl+1+(mp-1)*npol : m_bndelem*nsub_ctrl+(mp-1)*npol ) = J_normal_temp((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)                                            
+        enddo
 
-    ! Loop over poloidal direction first, then toroidal
-    do mp=1,n_plane
-      J_normal_temp((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = (zj_0((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) * psi_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + &
-                                                  psi_s_0((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)*zj((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)  &
-                                                  - zj_0((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) * psi_s_0((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + &
-                                                  R(:)**2.d0 * P0_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)) /sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out
-    enddo
+        ! !Debugging
+        ! OPEN(UNIT=12, FILE="Jn_array.dat", ACTION="write", STATUS="replace")
+        ! DO i=1,nsub_ctrl*n_plane
+        !   WRITE(12,*) J_normal_temp(i)
+        ! END DO
+        ! CLOSE(12)
 
-    do mp = 1,n_plane
-      J_normal( (m_bndelem-1)*nsub_ctrl+1+(mp-1)*npol : m_bndelem*nsub_ctrl+(mp-1)*npol ) = J_normal_temp((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)                                            
-    enddo
+        endif
 
-    ! !Debugging
-    ! OPEN(UNIT=12, FILE="Jn_array.dat", ACTION="write", STATUS="replace")
-    ! DO i=1,nsub_ctrl*n_plane
-    !   WRITE(12,*) J_normal_temp(i)
-    ! END DO
-    ! CLOSE(12)
+        do mp = 1,n_plane
+          R_global( (m_bndelem-1)*nsub_ctrl+1+(mp-1)*npol : m_bndelem*nsub_ctrl+(mp-1)*npol ) = R(:)                                            
+          Z_global( (m_bndelem-1)*nsub_ctrl+1+(mp-1)*npol : m_bndelem*nsub_ctrl+(mp-1)*npol ) = Z(:)
+          phi_global((m_bndelem-1)*nsub_ctrl+1+(mp-1)*npol : m_bndelem*nsub_ctrl+(mp-1)*npol) =  phi(mp)
+        enddo
 
-    endif
+      case ('CARIDDI')
+        do i = 1,npts_elm
+          P0_s (i)  = T0(i) * rho_s(i) + T0_s(i) * rho(i)
+        end do
+        
+        ! Compute normal current
+        do i = 1,npts_elm
+          i_CAR_glob = ielm_indexes(i)
+          Jn_CAR(i_CAR_glob) = ((zj(i) * psi_s(i)) + R(i)**2.d0 * P0_s(i)) / &
+                               sqrt(R_s(i)**2.d0 + Z_s(i)**2.d0) / (F0*R(i)) * sign_out
+        end do
 
-    do mp = 1,n_plane
-      R_global( (m_bndelem-1)*nsub_ctrl+1+(mp-1)*npol : m_bndelem*nsub_ctrl+(mp-1)*npol ) = R(:)                                            
-      Z_global( (m_bndelem-1)*nsub_ctrl+1+(mp-1)*npol : m_bndelem*nsub_ctrl+(mp-1)*npol ) = Z(:)
-      phi_global((m_bndelem-1)*nsub_ctrl+1+(mp-1)*npol : m_bndelem*nsub_ctrl+(mp-1)*npol) =  phi(mp)
-    enddo
-   
+  end select 
+
   enddo ! end bnd elements loop
 
+  select case (mapping)
 
-  ! Print points
+    case ('CARIDDI')
+            ! Debugging
+        OPEN(UNIT=12, FILE="Jn_CAR.dat", ACTION="write", STATUS="replace")
+        DO i=1,npts_CAR
+          WRITE(12,*) Jn_CAR(i)
+         END DO
+        CLOSE(12)
+    case ('gauss')
+  !Print points
 
-      OPEN(UNIT=12, FILE="R_ctrl.dat", ACTION="write", STATUS="replace")
-    DO i=1,nctrl
-      WRITE(12,*) R_global(i)
-    END DO
-    CLOSE(12)
+!       OPEN(UNIT=12, FILE="R_ctrl.dat", ACTION="write", STATUS="replace")
+!     DO i=1,nctrl
+!       WRITE(12,*) R_global(i)
+!     END DO
+!     CLOSE(12)
 
-        OPEN(UNIT=12, FILE="Z_ctrl.dat", ACTION="write", STATUS="replace")
-    DO i=1,nctrl
-      WRITE(12,*) Z_global(i)
-    END DO
-    CLOSE(12)
+!         OPEN(UNIT=12, FILE="Z_ctrl.dat", ACTION="write", STATUS="replace")
+!     DO i=1,nctrl
+!       WRITE(12,*) Z_global(i)
+!     END DO
+!     CLOSE(12)
 
-        OPEN(UNIT=12, FILE="phi_ctrl.dat", ACTION="write", STATUS="replace")
-    DO i=1,nctrl
-      WRITE(12,*) phi_global(i)
-    END DO
-    CLOSE(12)
+!         OPEN(UNIT=12, FILE="phi_ctrl.dat", ACTION="write", STATUS="replace")
+!     DO i=1,nctrl
+!       WRITE(12,*) phi_global(i)
+!     END DO
+!     CLOSE(12)
 
-    !Debugging
-    if (my_id == 0) then
-    OPEN(UNIT=12, FILE="Jn_real.dat", ACTION="write", STATUS="replace")
-    DO i=1,nctrl
-      WRITE(12,*) J_normal(i)
-    END DO
-    CLOSE(12)
-    endif
+!     !Debugging
+!     if (my_id == 0) then
+!     OPEN(UNIT=12, FILE="Jn_real.dat", ACTION="write", STATUS="replace")
+!     DO i=1,nctrl
+!       WRITE(12,*) J_normal(i)
+!     END DO
+!     CLOSE(12)
+!     endif
    
   J_normal_mat(:,1) = J_normal(:)
   
  ! Transform the assembled array in Bezier
-  call fourier( J_normal_mat, nctrl, n_plane, nsub_ctrl, 1, phi , equidistant, Jn_bez_mat, my_id , bnd_node_list, bnd_elm_list)
+  call fourier( J_normal_mat, nctrl, n_plane, nsub_ctrl, 1, phi , mapping, Jn_bez_mat, my_id , bnd_node_list, bnd_elm_list)
 
   Jn_bez(:) = Jn_bez_mat(:,1)
 
@@ -1495,11 +1654,12 @@ write(*,*) 'Inside Jn_output'
       bndelem_m = bnd_elm_list%bnd_element(m_bndelem)
       L_MP: do m_pt = 1, nsub_ctrl  ! Poloidal points in an element
         index = npol*(mp-1)+(m_bndelem-1)*nsub_ctrl + m_pt
-
-        if (equidistant) then
+        
+        select case (mapping)
+         case ('equidistant') 
           s = float(m_pt-1)/float(nsub_ctrl)           
           !call basisfunctions1(s, H1, H1_s, H1_ss)
-        endif
+         end select
             !step_dist       = sr%a_phiye%step ! for distributed matrices       
 
 
@@ -1588,19 +1748,19 @@ write(*,*) 'Inside Jn_output'
     endif
 
   endif
+  end select
  write(*,*) 'Finished Jn_output'
   end subroutine Jn_output
  
-  subroutine fourier(A, nctrl, ntor_f, nsub_ctrl, ndim, phi_ctrl,equidistant, global ,my_id, node_list, element_list)
+  subroutine fourier(A, nctrl, ntor_f, nsub_ctrl, ndim, phi_ctrl,mapping, global ,my_id, node_list, element_list)
   use data_structure
-
     real*8 :: A(nctrl,ndim)                               !< Function to fourier decompose
     real*8, allocatable  :: global(:,:)                 !< output matrix with Bezier
     type (type_bnd_node_list),        intent(in)    :: node_list
     type (type_bnd_element_list),     intent(in)    :: element_list
     integer, intent(in)  :: nctrl, ndim, ntor_f, nsub_ctrl !< number of poloidal points, dim, toroidal points
     real*8, intent(in) :: phi_ctrl(:) 
-    logical, intent(in) :: equidistant
+    character(len=*),                 intent(in)    :: mapping
     character*2 :: rank
     integer :: i, j, inode, i_v, i_order, iv
     integer :: ind, ind0, ind_glob
@@ -1619,7 +1779,7 @@ write(*,*) 'Inside Jn_output'
 
     do i = 1, sr%n_tor
        call calc_fourier_coeff_single(A,  ntor_f, npol, i, ndim, phi_ctrl, fourier_coeff,my_id)
-       call realspace2bezier(bez, fourier_coeff, ndim, nsub_ctrl, equidistant, node_list, element_list)
+       call realspace2bezier(bez, fourier_coeff, ndim, nsub_ctrl, mapping, node_list, element_list)
        do inode = 1, node_list%n_bnd_nodes
           do i_order=1,2
              ind  = global_JOREK_index(node_list,inode, i_order, i, sr%n_tor)
@@ -1635,6 +1795,7 @@ write(*,*) 'Inside Jn_output'
 
   !< Calculate toroidal Fourier coefficients of function
   subroutine calc_fourier_coeff_single(f, ntor_f, npol, itor_J ,ndim, phi_ctrl, fourier,my_id)
+
     real*8,  allocatable  ::  fourier(:,:)      !< Fourier coefficient, f(npol, ndim)
     real*8,  intent(in)   ::  f(:,:)            !< function to decompose
                                                 !< size( npol*ntor_f:ndim )
@@ -1648,7 +1809,7 @@ write(*,*) 'Inside Jn_output'
     
     !<----------------Local variables ----------------------------
     integer :: itor      !< number of harmonic in realspace convention
-    integer :: jphi, k, i_start, i_end, mode_n(sr%n_tor)
+    integer :: jphi, k,i, i_start, i_end, mode_n(sr%n_tor)
     real*8  :: phi       
     logical :: is_c      !< T = cos, F = sin
     
@@ -1683,14 +1844,14 @@ write(*,*) 'Inside Jn_output'
   end subroutine calc_fourier_coeff_single
 
 
-  subroutine realspace2bezier(bez, f, ndim, nsub, equidistant, node_list, element_list)
+  subroutine realspace2bezier(bez, f, ndim, nsub, mapping, node_list, element_list)
   use data_structure
   use mod_basisfunctions
   use gauss,          only: n_gauss, xgauss, wgauss
     integer, intent(in)  :: nsub        !< Number of evaluation points to be used for quadrature
     integer, intent(in)  :: ndim        !< Second Dimension of function f
     real*8 , intent(in)  :: f(:,:)      !< function (Bfield) to be projected on Bezier basis (nsub*nelements:ndim)
-    logical, intent(in)  :: equidistant
+    character(len=*),             intent(in)    :: mapping  
     real*8 , intent(out), allocatable :: bez(:,:)    !< Bezier coefficients
     type (type_bnd_node_list),        intent(in)    :: node_list
     type (type_bnd_element_list),     intent(in)    :: element_list
@@ -1726,7 +1887,8 @@ write(*,*) 'Inside Jn_output'
     subseq(n_points_poloidal) = 0
     subseq = subseq +1
     
-    if (equidistant) then
+    select case (mapping)
+     case ('equidistant')
         write(*,*) 'realspace2bezier: Using equistant points'
         if (ALLOCATED(x)) deallocate(x)
         if (ALLOCATED(w)) deallocate(w)
@@ -1740,7 +1902,7 @@ write(*,*) 'Inside Jn_output'
         call  basisfunctions1((x(j)), H, Hs, Hss)
         H_g(j,:,:) = H                        ! basis function at Gaussian points       
       end do
-    else
+    case ('gauss')
         write(*,*) 'realspace2bezier: Using Gauss points'
         if (ALLOCATED(x)) deallocate(x)
         if (ALLOCATED(w)) deallocate(w)
@@ -1754,7 +1916,7 @@ write(*,*) 'Inside Jn_output'
           call  basisfunctions1((x(j)), H, Hs, Hss)
           H_g(j,:,:) = H                        ! basis function at Gaussian points
         enddo
-    end if
+    end select
 
     aa = 0.d0
     integral = 0.d0
@@ -1792,7 +1954,8 @@ write(*,*) 'Inside Jn_output'
       !--------------- Interpolate function using Gauss points ------------------------
       ! write(*,*) 'In element loop'
       ! write(6,*) 'In element loop'
-    if (equidistant) then
+    select case (mapping)
+    case ('equidistant')
      do k = 1, nsub
         j = k + nsub*(ielm-1)
         integral(i1, :) =  integral(i1, :) + (H_g(k,1,1)*f(j,:) + H_g(k+1,1,1)*f(subseq(j),:))/2 * sz(1,1)* w(k)
@@ -1802,7 +1965,7 @@ write(*,*) 'Inside Jn_output'
       enddo
       ! write(*,*) 'In element loop, after nsub loop'
       ! write(6,*) 'In element loop, after nsub loop'
-    else
+    case ('gauss')
       do k = 1, nsub
         j = k + nsub*(ielm-1)
         integral(i1, :) =  integral(i1, :) + H_g(k,1,1)*f(j,:) * sz(1,1)* w(k)
@@ -1810,7 +1973,7 @@ write(*,*) 'Inside Jn_output'
         integral(i3, :) =  integral(i3, :) + H_g(k,2,1)*f(j,:)  * sz(2,1)* w(k) 
         integral(i4, :) =  integral(i4, :) + H_g(k,2,2)*f(j,:)  * sz(2,2)* w(k) 
       enddo
-    endif
+    end select
 
   enddo
     ! write(*,*) 'After element loop'
@@ -1845,9 +2008,8 @@ write(*,*) 'Inside Jn_output'
 
   ! --- Routine to determine if which fourier mode corresponds to JOREK
   integer function itor_fourier(itor_J)
-  
     integer, intent(in) :: itor_J      ! --- mode in JOREK counting
-    integer             :: mode_n(sr%n_tor)
+    integer             :: mode_n(sr%n_tor),i
     
     mode_n = mode_number(sr%i_tor)
 
@@ -1862,9 +2024,8 @@ write(*,*) 'Inside Jn_output'
 
     ! --- Routine to determine if JOREK mode is sin or cos
   logical function is_c_JOREK(itor_J)
-  
     integer, intent(in) :: itor_J      ! --- mode in JOREK counting
-    integer             :: mode_n(sr%n_tor)
+    integer             :: mode_n(sr%n_tor),i
 
     mode_n = mode_number(sr%i_tor)
 
@@ -1884,7 +2045,6 @@ write(*,*) 'Inside Jn_output'
   real*8 :: phi, real_func(nctrl, n_modes)
   integer :: i, j, k
   integer :: mode_n(sr%n_tor)
-
   mode_n = mode_number(sr%i_tor)
     
   do i = 1, npol
@@ -1950,5 +2110,26 @@ write(*,*) 'Inside Jn_output'
   enddo
 
   end function mode_number
+
+  subroutine find_loc_indexes(array, sub_array, loc_indexes) 
+  ! Finds the indexes of the second array's elements occurring in the first array
+  implicit none
+  integer,               intent(in) :: array(:)
+  integer,               intent(in) :: sub_array(:)
+  integer, ALLOCATABLE,  intent(out):: loc_indexes(:)
+  integer                           :: i
+
+  ! Initialize result with all possible starting indices
+  loc_indexes = [(i, i = 1, size(array)-size(sub_array)+1)]
+  ! Sequentially keep only those indices that satisfy a condition
+  do i = 1, size(sub_array)
+    ! Condition for keeping: the value of array(results + i - 1) must be equal to the value of sub_array(i)
+    ! Use PACK to only keep results that satisfy this condition
+    loc_indexes = PACK(loc_indexes, array(loc_indexes + i - 1) == sub_array(i))
+    if (size(loc_indexes) == 0) then
+      exit
+    end if
+  end do
+  end subroutine find_loc_indexes
 
  end module vacuum
