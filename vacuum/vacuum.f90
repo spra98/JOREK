@@ -1401,13 +1401,13 @@ module vacuum
 
             do mp=1,n_plane
               do in=1,sr%n_tor
-                psi_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = psi_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,1) * k_size*H1_s(k_vertex,k_dof,:) * HZ(in,mp)
-                zj   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)   = zj   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,3) * k_size*H1(k_vertex,k_dof,:) * HZ(in,mp)
+                psi_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = psi_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(sr%i_tor(in),k_dir,1) * k_size*H1_s(k_vertex,k_dof,:) * HZ(sr%i_tor(in),mp)
+                zj   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)   = zj   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(sr%i_tor(in),k_dir,3) * k_size*H1(k_vertex,k_dof,:) * HZ(sr%i_tor(in),mp)
                 if (jorek_model > 200 ) then
-                  rho  ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = rho  ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,5) * k_size*  H1(k_vertex,k_dof,:) * HZ(in,mp)
-                  rho_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = rho_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,5) * k_size*H1_s(k_vertex,k_dof,:) * HZ(in,mp)
-                  T0   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = T0   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,6) * k_size*  H1(k_vertex,k_dof,:) * HZ(in,mp)
-                  T0_s ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = T0_s ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,6) * k_size*H1_s(k_vertex,k_dof,:) * HZ(in,mp)
+                  rho  ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = rho  ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(sr%i_tor(in),k_dir,5) * k_size*  H1(k_vertex,k_dof,:) * HZ(sr%i_tor(in),mp)
+                  rho_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = rho_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(sr%i_tor(in),k_dir,5) * k_size*H1_s(k_vertex,k_dof,:) * HZ(sr%i_tor(in),mp)
+                  T0   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = T0   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(sr%i_tor(in),k_dir,6) * k_size*  H1(k_vertex,k_dof,:) * HZ(sr%i_tor(in),mp)
+                  T0_s ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = T0_s ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(sr%i_tor(in),k_dir,6) * k_size*H1_s(k_vertex,k_dof,:) * HZ(sr%i_tor(in),mp)
                 else
                   rho = 1.d0; rho_s = 0.d0; T0 = 0.d0; T0_s = 0.d0 
                 endif        
@@ -1447,12 +1447,12 @@ module vacuum
               end if
             end do
 
-        !Debugging
-        OPEN(UNIT=12, FILE="HZ_CAR.dat", ACTION="write", STATUS="replace")
-        DO i=1,npts_elm
-          WRITE(12,*) HZ_CAR(1,i)
-         END DO
-        CLOSE(12)
+        ! !Debugging
+        ! OPEN(UNIT=12, FILE="HZ_CAR.dat", ACTION="write", STATUS="replace")
+        ! DO i=1,npts_elm
+        !   WRITE(12,*) HZ_CAR(1,i)
+        !  END DO
+        ! CLOSE(12)
            
 
             ! Right now the values are placed sequentially in these local arrays for psi, zj, rho, T0
@@ -1460,7 +1460,7 @@ module vacuum
             do i= 1,npts_elm
               do in = 1,sr%n_tor
                 psi_s(i) =  psi_s(i) + node_k%values(sr%i_tor(in),k_dir,1) * k_size*H1_CAR_s(k_vertex,k_dof,i) * HZ_CAR(in,i)
-                zj(i)    =  zj(i) + node_k%values(sr%i_tor(in),k_dir,3) * k_size*H1_CAR_s(k_vertex,k_dof,i) * HZ_CAR(in,i)
+                zj(i)    =  zj(i) + node_k%values(sr%i_tor(in),k_dir,3) * k_size*H1_CAR(k_vertex,k_dof,i) * HZ_CAR(in,i)
                 if (jorek_model > 200 ) then
                   rho  (i) = rho  (i) + node_k%values(sr%i_tor(in),k_dir,5) * k_size*  H1_CAR(k_vertex,k_dof,i) * HZ_CAR(in,i)
                   rho_s(i) = rho_s(i) + node_k%values(sr%i_tor(in),k_dir,5) * k_size*H1_CAR_s(k_vertex,k_dof,i) * HZ_CAR(in,i)
@@ -1591,7 +1591,7 @@ module vacuum
   select case (mapping)
 
     case ('CARIDDI')
-            ! Debugging
+        ! Debugging
         OPEN(UNIT=12, FILE="Jn_CAR.dat", ACTION="write", STATUS="replace")
         DO i=1,npts_CAR
           WRITE(12,*) Jn_CAR(i)
@@ -1618,14 +1618,14 @@ module vacuum
 !     END DO
 !     CLOSE(12)
 
-!     !Debugging
-!     if (my_id == 0) then
-!     OPEN(UNIT=12, FILE="Jn_real.dat", ACTION="write", STATUS="replace")
-!     DO i=1,nctrl
-!       WRITE(12,*) J_normal(i)
-!     END DO
-!     CLOSE(12)
-!     endif
+    !Debugging
+    if (my_id == 0) then
+    OPEN(UNIT=12, FILE="Jn_gauss.dat", ACTION="write", STATUS="replace")
+    DO i=1,nctrl
+      WRITE(12,*) J_normal(i)
+    END DO
+    CLOSE(12)
+    endif
    
   J_normal_mat(:,1) = J_normal(:)
   
@@ -1746,6 +1746,7 @@ module vacuum
     END DO
     CLOSE(12)
     endif
+
 
   endif
   end select
