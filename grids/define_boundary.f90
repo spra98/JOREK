@@ -195,7 +195,6 @@ if (mf .le. 0) then
     fpsi(m) = - fpsi(m)
   enddo
 
-  fpsi(1) = 0.d0
 
   call tr_deallocate(tht_tmp,"tht_tmp",CAT_GRID)
   call tr_deallocate(r_tmp,"r_tmp",CAT_GRID)
