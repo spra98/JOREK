@@ -240,7 +240,6 @@ if (my_id == 0) then
     enddo
 
     ! --- ATTENTION: limiter free-boundary plasmas not working well yet with Newton method 
-    if (.not. xpoint) psi_bnd_kl = 0.d0  
  
     if (.not. newton_method_GS) then
       psi_bnd_kl  = 0.d0
