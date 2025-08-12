@@ -608,6 +608,13 @@ module vacuum_response
       sr%ncoil  = read_intparam_parallel(filehandle, 'ncoil' , disp)
       sr%npot_w = read_intparam_parallel(filehandle, 'npot_w', disp)
       sr%n_w    = read_intparam_parallel(filehandle, 'n_w'   , disp)
+      if (halo_freeb) then
+        ! Read null space dimension for wall
+        if (CARIDDI_mode) sr%n_nw   =  read_intparam_parallel(filehandle, 'n_nw'   , disp)
+
+      else
+        sr%n_w = 0
+      endif
       sr%ntri_w = read_intparam_parallel(filehandle, 'ntri_w', disp)
 
       if ( sr%file_version >= 5 .and. (.not. CARIDDI_mode)) then
@@ -702,12 +709,16 @@ module vacuum_response
       end if
 
       call read_array_not_distr(filehandle, 'yy', (/sr%n_w,0/), disp, float1d=sr%d_yy)
-   
+      if (halo_freeb) then
+        if (CARIDDI_mode) call read_array_not_distr(filehandle, 'yy_ii', (/sr%n_nw,0 /), disp, float1d=sr%dii_yy   )
+      endif
     end if
 
     if(my_id==0) call memory_prediction(sr%n_w, sr%nd_bez, ntasks)
 
     call MPI_BCAST(sr%n_w,    1, MPI_INTEGER, 0, MPI_COMM_WORLD, err)
+    ! Dimension of wall dofs' null space
+    if (CARIDDI_mode) call MPI_BCAST(sr%n_nw,   1, MPI_INTEGER, 0, MPI_COMM_WORLD, err)
     call MPI_BCAST(sr%nd_bez, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, err)
     call MPI_BCAST(sr%n_pts_real_w, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, err)  
     call MPI_BCAST(sr%n_pts_real_J, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, err)
@@ -715,26 +726,53 @@ module vacuum_response
     call MPI_bcast(sr%ncoil,                   1, MPI_INTEGER,  0, MPI_COMM_WORLD, err)
 
     ! Last parameter defines how matrix should be distributed: .false. - rowwise; .true. - columnwise
-    call read_array_par    (filehandle, 'ye',       (/sr%n_w,sr%nd_bez/),    disp, my_id,  sr%a_ye,     .false.)    
+    call read_array_par    (filehandle, 'ye',       (/sr%n_w,sr%nd_bez/),    disp, my_id,  sr%a_ye,     .false.) 
+    if (halo_freeb) then
+      if (CARIDDI_mode) call read_array_par(filehandle, 'yie', (/sr%n_nw, sr%nd_bez/), disp, my_id, sr%a_yie, .false. ) 
+    endif
     call read_array_par    (filehandle, 'ey',       (/sr%nd_bez,sr%n_w/),    disp, my_id,  sr%a_ey,     .true. )
+    if (halo_freeb) then
+      if (CARIDDI_mode) call read_array_par  (filehandle, 'eyi',    (/sr%nd_bez,sr%n_nw/),    disp, my_id,  sr%a_eyi,     .true. )
+      if (CARIDDI_mode) call read_array_par  (filehandle, 'eye',    (/sr%nd_bez,sr%n_electrode_w-1/),    disp, my_id,  sr%a_eye,  .true. )
+    endif
+
     call read_array_par    (filehandle, 'ee',       (/sr%nd_bez,sr%nd_bez/), disp, my_id,  sr%a_ee,     .true. )
+    
+    ! =========================================  Aeq_el =============================================================
+    if (halo_freeb) then
+      if (CARIDDI_mode)   call read_array_par(filehandle, 'eq_el',  (/sr%nd_bez,sr%n_electrode_J-1/), disp, my_id,  sr%aeq_el,     .true. )
+    endif
+    ! ============================== S_ww_inv, S_ww_ii_inv ===========================================================
     if (.not. vacuum_min) then
       if (.not. CARIDDI_mode) call read_array_par    (filehandle, 's_ww',     (/sr%n_w,sr%n_w/),       disp, my_id,  sr%s_ww,     .false.)
       call read_array_par    (filehandle, 's_ww_inv', (/sr%n_w,sr%n_w/),       disp, my_id,  sr%s_ww_inv, .true.)
+      if (halo_freeb) then
+        if (CARIDDI_mode) call read_array_par(filehandle, 's_ww_ii_inv', (/sr%n_nw,sr%n_nw/),       disp, my_id,  sr%s_ww_ii_inv, .true.)
+      endif
     else
       if (.not. CARIDDI_mode) call read_array_par    (filehandle, 's_ww',     (/sr%n_w,sr%n_w/),       disp, my_id,  sr%s_ww,     .false. , &
           loc_start=sr%ind_start_coils, loc_len=sr%ncoil, loc_row=.true. )
       call read_array_par    (filehandle, 's_ww_inv', (/sr%n_w,sr%n_w/),       disp, my_id,  sr%s_ww_inv, .true., &
           loc_start=sr%ind_start_coils, loc_len=sr%ncoil, loc_row=.false. )
+      if (halo_freeb) then
+        if (CARIDDI_mode)  call read_array_par    (filehandle, 's_ww_ii_inv', (/sr%n_nw,sr%n_nw/), disp, my_id,  sr%s_ww_ii_inv, .true., &
+          loc_start=sr%ind_start_coils, loc_len=sr%ncoil, loc_row=.false. )
+      endif
       sr%ind_start_coils = 1
     end if
 
-    if (my_id == 0 .and. CARIDDI_mode) then ! use read_array_not_distr ?
-      call read_array_not_distr(filehandle, 'ielsphi_w', (/sr%n_pts_real_w,3/), disp, float2d=sr%ielsphi_real_w)
-      call read_array_not_distr(filehandle, 'ielsphi_J', (/sr%n_pts_real_J,3/), disp, float2d=sr%ielsphi_real_J)
-      call read_array_not_distr(filehandle, 'Jmat_w', (/sr%n_electrode_w,sr%n_pts_real_w/), disp, float2d=sr%Jmat_real_w)
-      call read_array_not_distr(filehandle, 'Jmat_J', (/sr%n_electrode_J,sr%n_pts_real_J/), disp, float2d=sr%Jmat_real_J)
-    end if   
+    if (halo_freeb) then
+      if (my_id == 0 .and. CARIDDI_mode) then ! use read_array_not_distr ?
+        call read_array_par(filehandle, 'FwtFw_inv', (/sr%n_electrode_w-1, sr%n_electrode_w-1/), disp, my_id, sr%fwtfw_inv, .false. ) 
+        call read_array_not_distr(filehandle, 'ielsphi_w', (/sr%n_pts_real_w,3/), disp, float2d=sr%ielsphi_real_w)
+        call read_array_not_distr(filehandle, 'ielsphi_J', (/sr%n_pts_real_J,3/), disp, float2d=sr%ielsphi_real_J)
+        call read_array_not_distr(filehandle, 'Jmat_real_w', (/sr%n_electrode_w,sr%n_pts_real_w/), disp, float2d=sr%Jmat_real_w)
+        call read_array_not_distr(filehandle, 'Jmat_real_J', (/sr%n_electrode_J,sr%n_pts_real_J/), disp, float2d=sr%Jmat_real_J)
+        call read_array_not_distr(filehandle, 'Jmat_w', (/sr%n_electrode_w,sr%nd_bez /), disp, float2d=sr%Jmat_w)
+        call read_array_not_distr(filehandle, 'Jmat_J', (/sr%n_electrode_J,sr%nd_bez /), disp, float2d=sr%Jmat_J)
+
+      end if   
+    endif
 
     if(my_id == 0 .and. .not. CARIDDI_mode) then
      call read_array_not_distr(filehandle, 'xyzpot_w', (/sr%npot_w,3/), disp, float2d=sr%xyzpot_w)
@@ -751,6 +789,8 @@ module vacuum_response
     ! --- Import normalization
     sr%a_ee%loc_mat(:,:) = sr%a_ee%loc_mat(:,:) * 2.d0*PI
     sr%a_ye%loc_mat(:,:) = sr%a_ye%loc_mat(:,:) * 2.d0*PI
+    sr%a_yie%loc_mat(:,:)= sr%a_yie%loc_mat(:,:)* 2.d0*PI
+
     if ( vacuum_debug .and. (my_id==0) ) write(*,*) 'Applied import normalization.'
 
     ! --- Compute ideal-wall and no-wall response matrices.
@@ -1143,6 +1183,7 @@ module vacuum_response
     call MPI_bcast(sr%n_pts_real_J,            1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
     call MPI_bcast(sr%npot_w,                  1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
     call MPI_bcast(sr%n_w,                     1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
+    if (CARIDDI_mode) call MPI_bcast(sr%n_nw,  1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
     call MPI_bcast(sr%ntri_w,                  1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
     call MPI_bcast(sr%n_tor,                   1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
     call MPI_bcast(sr%n_tor0,                  1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
@@ -1168,11 +1209,15 @@ module vacuum_response
     
     n_dof_starwall = sr%nd_bez
     n_wall_curr    = sr%n_w
-    
+    n_wall_curr_i  = sr%n_nw
     ! --- Allocate matrices.
     if ( my_id /= 0 ) then
       if (allocated(sr%i_tor)   ) deallocate(sr%i_tor);    allocate(sr%i_tor(sr%n_tor))
       if (allocated(sr%d_yy)    ) deallocate(sr%d_yy);     allocate(sr%d_yy(sr%n_w))
+      if (CARIDDI_mode) then
+        if (ALLOCATED(sr%dii_yy)) deallocate(sr%dii_yy)
+        allocate(sr%dii_yy(sr%n_nw))
+      endif
       if (.not. CARIDDI_mode) then
         if (allocated(sr%xyzpot_w)) deallocate(sr%xyzpot_w); allocate(sr%xyzpot_w(sr%npot_w,3))
         if (allocated(sr%jpot_w)  ) deallocate(sr%jpot_w);   allocate(sr%jpot_w(sr%ntri_w,3))
@@ -1205,6 +1250,7 @@ module vacuum_response
     ! --- Broadcast matrices.
     call MPI_bcast(sr%i_tor,    sr%n_tor,                MPI_INTEGER,          0, MPI_COMM_WORLD, ierr)
     call MPI_bcast(sr%d_yy,     sr%n_w,                  MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
+    if (CARIDDI_mode) call MPI_bcast(sr%dii_yy, sr%n_nw,  MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
     if (.not. CARIDDI_mode) then
       call MPI_bcast(sr%xyzpot_w, sr%npot_w*3,             MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
       call MPI_bcast(sr%jpot_w,   sr%ntri_w*3,             MPI_INTEGER,          0, MPI_COMM_WORLD, ierr)
@@ -1298,6 +1344,8 @@ module vacuum_response
        write(*,33) 'ncoil                   =', sr%ncoil
        write(*,33) 'npot_w                  =', sr%npot_w
        write(*,33) 'n_w                     =', sr%n_w
+       if (CARIDDI_mode)        write(*,33) 'n_nw                     =', sr%n_nw
+
        write(*,33) 'ntri_w                  =', sr%ntri_w
        write(*,33) 'iwall                   =', sr%iwall  
        write(*,33) 'nwu                     =', sr%nwu    
@@ -1976,8 +2024,13 @@ module vacuum_response
     if ( (sr%ncoil /= 0) ) then    !avoid it when using COIL_FIELD
       call coil_current_source(my_id)
     else
-      if (.not. allocated (Y_coils0)) allocate(Y_coils0(n_wall_curr))
-      Y_coils0(:) = 0.d0
+      if (halo_freeb) then
+        if (.not. allocated (Yi_coils0)) allocate(Yi_coils0(n_wall_curr_i))
+        Yi_coils0(:) = 0.d0
+      else
+        if (.not. allocated (Y_coils0)) allocate(Y_coils0(n_wall_curr))
+        Y_coils0(:) = 0.d0
+      endif
     endif
 
     ! --- Update the derived response matrices
@@ -1994,7 +2047,7 @@ module vacuum_response
       write(*,*) my_id, 'dpsibnd_vec: ', sum(abs(dpsibnd_vec)), sum(dpsibnd_vec)
     end if
 
-    call boundary_check(my_id)
+    !call boundary_check(my_id)
     allocate(rhs_contrib_arr(n_dof_starwall))
     rhs_contrib_arr=0.0
     if (resistive_wall) then
@@ -2334,26 +2387,56 @@ module vacuum_response
     
     if ( resistive_wall ) then
       
-      if ( (allocated(wall_curr)) .and. (.not. wall_curr_initialized) ) &
-        deallocate(wall_curr)
-      if ( (allocated(dwall_curr)) .and. (.not. wall_curr_initialized) ) &
-        deallocate(dwall_curr)
+
+      if (halo_freeb .and. CARIDDI_mode)  then 
+        ! ====================== EDDY+HALO COUPLING ================================
+        if ( (allocated(wall_curr_i)) .and. (.not. wall_curr_initialized) ) &
+          deallocate(wall_curr_i)
+        if ( (allocated(dwall_curr_i)) .and. (.not. wall_curr_initialized) ) &
+          deallocate(dwall_curr_i)
+        if ( .not. allocated(wall_curr_i) ) then
+          allocate( wall_curr_i(n_wall_curr_i) )
+          do k = 1, n_wall_curr_i
+            wall_curr_i(k) = 0.d0! 
+          end do
+        endif
+        if ( .not. allocated(dwall_curr_i) ) then
+          write(*,*) 'Allocating dwall_curr with', n_wall_curr_i
+          allocate( dwall_curr_i(n_wall_curr_i) )
+          do k = 1, n_wall_curr_i
+            dwall_curr_i(k) = 0.d0!- sum( sr%a_ye(k,:) * dpsibnd_vec(:) )
+          end do
+        end if
+
+        !wwwwwwwwwwwwwwwwwwww  TO BE EXTENDED WITH wall_curr_e wwwwwwwwwwwwwwwwwwwwwwwwwwwwww
+
+      else
+        ! ======================= EDDY COUPLING ===================================
+        if ( (allocated(wall_curr)) .and. (.not. wall_curr_initialized) ) &
+          deallocate(wall_curr)
+        if ( (allocated(dwall_curr)) .and. (.not. wall_curr_initialized) ) &
+          deallocate(dwall_curr)
+
+        if ( .not. allocated(wall_curr) ) then
+          allocate( wall_curr(n_wall_curr) )
+          do k = 1, n_wall_curr
+            wall_curr(k) = 0.d0! - sum( sr%a_ye(k,:) * psibnd_vec(:) )
+          end do
+        end if
       
-      if ( .not. allocated(wall_curr) ) then
-        allocate( wall_curr(n_wall_curr) )
-        do k = 1, n_wall_curr
-          wall_curr(k) = 0.d0! - sum( sr%a_ye(k,:) * psibnd_vec(:) )
-        end do
-      end if
+        if ( .not. allocated(dwall_curr) ) then
+          write(*,*) 'Allocating dwall_curr with', n_wall_curr
+          allocate( dwall_curr(n_wall_curr) )
+          do k = 1, n_wall_curr
+            dwall_curr(:) = 0.d0!- sum( sr%a_ye(k,:) * dpsibnd_vec(:) )
+          end do
+        end if        
       
-      if ( .not. allocated(dwall_curr) ) then
-      write(*,*) 'Allocating dwall_curr with', n_wall_curr
-        allocate( dwall_curr(n_wall_curr) )
-        do k = 1, n_wall_curr
-          dwall_curr(:) = 0.d0!- sum( sr%a_ye(k,:) * dpsibnd_vec(:) )
-        end do
-      end if         
+
+      endif
       
+      ! ==========================================================================
+       
     end if
     
     ! --- Also initialize the old_dpsibnd_vec
@@ -2363,6 +2446,12 @@ module vacuum_response
 
     if (.not. CARIDDI_mode .and. .not. vacuum_min) call write_wall_vtk(0, resistive_wall, my_id)
     deallocate( psibnd_vec, dpsibnd_vec )
+    
+    ! wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww
+    ! ====================================================================================================
+    ! ============ HALO NOT IMPLEMENTED HERE SINCE THIS IS NOT FOR CARIDDI YET!!!!!! =====================  
+    ! ====================================================================================================
+    ! wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww
 
     ! --- Initialize net toroidal wall current (for plot_live_data)
     if ( resistive_wall .and. (index_now>0) .and. (index_start+nstep>0)) then
@@ -2507,20 +2596,37 @@ module vacuum_response
     end do
 
 
-    if (.not. allocated (Y_coils0)) allocate(Y_coils0(n_wall_curr))
     if (.not. allocated (potentials_real_0)) allocate(potentials_real_0(n_coils))
     ! --- Transform real currents into starwall currents
-    Y_coils0          = 0.d0
     potentials_real_0 = 0.d0
     potentials_real_0(:) = I_coils(:)  * mu_zero
-    i1 = sr%ind_start_coils;       i2 = sr%ind_start_coils + sr%ncoil -1
-    do i = 1, n_wall_curr
-      if ( (i>=sr%s_ww_inv%ind_start) .and. (i<=sr%s_ww_inv%ind_end) ) then
-        Y_coils0(i) = sum(sr%s_ww_inv%loc_mat(i-my_id*sr%s_ww_inv%step,i1:i2)*potentials_real_0(:))
-      end if
-    end do
-    call MPI_ALLReduce(MPI_IN_PLACE, Y_coils0, size(Y_coils0),MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,ierr)
+    
+    ! ================================ EDDY + HALO COUPLING ====================================================
+    if (halo_freeb .and. CARIDDI_mode ) then
+      if (.not. allocated (Yi_coils0)) allocate(Yi_coils0(n_wall_curr_i))
+      Yi_coils0          = 0.d0
+      i1 = sr%ind_start_coils;       i2 = sr%ind_start_coils + sr%ncoil -1
+      do i = 1, n_wall_curr_i
+        if ( (i>=sr%s_ww_ii_inv%ind_start) .and. (i<=sr%s_ww_ii_inv%ind_end) ) then
+          Yi_coils0(i) = sum(sr%s_ww_ii_inv%loc_mat(i-my_id*sr%s_ww_ii_inv%step,i1:i2)*potentials_real_0(:))
+        end if
+      end do
+      call MPI_ALLReduce(MPI_IN_PLACE, Yi_coils0, size(Yi_coils0),MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,ierr)
+    
+    else
+      ! ----------------------- EDDY COUPLING ---------------------------------------------------------------
+      if (.not. allocated (Y_coils0)) allocate(Y_coils0(n_wall_curr))
+      Y_coils0          = 0.d0
+      i1 = sr%ind_start_coils;       i2 = sr%ind_start_coils + sr%ncoil -1
+      do i = 1, n_wall_curr
+        if ( (i>=sr%s_ww_inv%ind_start) .and. (i<=sr%s_ww_inv%ind_end) ) then
+          Y_coils0(i) = sum(sr%s_ww_inv%loc_mat(i-my_id*sr%s_ww_inv%step,i1:i2)*potentials_real_0(:))
+        end if
+      end do
+      call MPI_ALLReduce(MPI_IN_PLACE, Y_coils0, size(Y_coils0),MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,ierr)
 
+    endif
+    ! ===========================================================================================================
   end subroutine coil_current_source
   
   
@@ -2542,54 +2648,115 @@ module vacuum_response
     integer              :: k, k2
     integer              :: ierr
     real *8, allocatable :: dwall_curr_2(:)
+    real *8, allocatable :: dwall_curr_i2(:)   
     real *8, allocatable :: tmp_coil_curr(:)
     real *8              :: zeta, theta
     real *8, allocatable :: tmp_d_s(:)
     real *8, allocatable :: inv_tmp_d_s(:)
+    real *8, allocatable :: tmp_d_sii(:)
+    real *8, allocatable :: inv_tmp_d_sii(:)
 
-    if  (.not. allocated(dwall_curr_2)) allocate (dwall_curr_2(n_wall_curr))
-    if ( vacuum_debug ) write(*,*) 'wall_curr(before)', sum(abs(wall_curr)), sum(wall_curr)    
-    
-    if ( (.not. allocated(old_dpsibnd_vec)) .or. (size(old_dpsibnd_vec,1)/= n_dof_starwall) ) then
-      if ( allocated(old_dpsibnd_vec) ) deallocate(old_dpsibnd_vec)
-      allocate( old_dpsibnd_vec(n_dof_starwall) )
-    end if    
 
-    !> WARNING: The following computation of dwall_curr_2 contains the term
-    !!          dwall_curr which refers to the previous time-step
-    write(*,*) 'n_wall_curr', n_wall_curr
-    do k = 1, n_wall_curr
-    
-      ! --- contribution from not distributed matrices
-      dwall_curr_2(k) = response_d_b(k) * (wall_curr(k) - Y_coils0(k)) &
-         + response_d_c(k) * dwall_curr(k)
+    if (halo_freeb .and. CARIDDI_mode) then
+      ! ===================================================================================================
+      ! ================================ EDDY + HALO COUPLING =============================================
+      ! ===================================================================================================
 
-    end do
+      
+      if  (.not. allocated(dwall_curr_i2)) allocate (dwall_curr_i2(n_wall_curr_i))
+      if ( vacuum_debug ) write(*,*) 'wall_curr(before)', sum(abs(wall_curr_i)), sum(wall_curr_i)    
+        
 
-    
-    !> WARNING: Now we can compute the dwall_curr term for the current time-step
-    !!          to be added to the contribution from the previous time-step
-    theta = time_evol_theta
-    zeta  = time_evol_zeta
+      !> WARNING: The following computation of dwall_curr_2 contains the term
+      !!          dwall_curr which refers to the previous time-step
+      write(*,*) 'n_wall_curr_i', n_wall_curr_i
+      do k = 1, n_wall_curr_i
+      
+        ! --- contribution from not distributed matrices
+        dwall_curr_i2(k) = response_d_b_i(k) * (wall_curr_i(k)  - Yi_coils0(k)) &  
+          + response_d_c_i(k) * dwall_curr_i(k)
 
-    if  (.not. allocated(tmp_d_s)     ) allocate (tmp_d_s     (n_wall_curr))
-    if  (.not. allocated(inv_tmp_d_s) ) allocate (inv_tmp_d_s (n_wall_curr))
+      end do
 
-    tmp_d_s(:) = 1.d0 + zeta + tstep * theta * wall_resistivity * sr%d_yy(:)
-    inv_tmp_d_s(:) = 1.0d0 / tmp_d_s(:)
-    dwall_curr(:) = 0.0d0
-    !> corresponds to matrix A in documentation
-    call extended_matrix_vector(my_id, -(1.d0+zeta), sr%a_ye, inv_tmp_d_s, &
-                                dpsibnd_vec(:), .false., dwall_curr, .false.)
-    !> corresponds to matrix D in documentation
-    call extended_matrix_vector(my_id, zeta, sr%a_ye, inv_tmp_d_s, &
-                                old_dpsibnd_vec(:), .false., dwall_curr, .true.)
+      theta = time_evol_theta
+      zeta  = time_evol_zeta
 
-    !> Gathering all the terms into dwall_curr
-    dwall_curr(:) = dwall_curr(:)+dwall_curr_2(:)
+      if  (.not. allocated(tmp_d_sii)     ) allocate (tmp_d_s     (n_wall_curr_i))
+      if  (.not. allocated(inv_tmp_d_sii) ) allocate (inv_tmp_d_s (n_wall_curr_i))
+      tmp_d_sii(:) = 1.d0 + zeta +tstep*theta*wall_resistivity* sr%dii_yy(:)
+      inv_tmp_d_sii(:) = 1.0d0 / tmp_d_sii(:)
 
-    if (index_now <= 1 ) dwall_curr = 0.d0
-    wall_curr(:) = wall_curr(:) + dwall_curr(:)
+      !> WARNING: Now we can compute the dwall_curr term for the current time-step
+      !!          to be added to the contribution from the previous time-step
+
+      dwall_curr_i(:) = 0.d0
+
+      ! N.B. Sign change since Ci_star from CARIDDI already contains the minus sign! See documentation
+      !> corresponds to matrix A_i in documentation
+      call extended_matrix_vector(my_id, (1.d0+zeta), sr%a_yie, inv_tmp_d_sii, &
+                                dpsibnd_vec(:), .false., dwall_curr_i, .false.) 
+      !> corresponds to matrix D_i in documentation
+      call extended_matrix_vector(my_id, -zeta, sr%a_yie, inv_tmp_d_sii, &
+                                old_dpsibnd_vec(:), .false., dwall_curr_i, .true.) 
+       
+      dwall_curr_i(:) = dwall_curr_i(:) + dwall_curr_i2(:)
+      if (index_now <= 1 ) dwall_curr_i = 0.d0
+      wall_curr_i(:) = wall_curr_i(:) + dwall_curr_i(:) 
+
+      ! ---- To be expended with wall_curr_e ---------------
+
+        
+    else
+
+      ! ---------------------------------------------------------------------------------------------------
+      ! ---------------------------- EDDY COUPLING ------------------------------------------------------ 
+      ! --------------------------------------------------------------------------------------------------
+      if  (.not. allocated(dwall_curr_2)) allocate (dwall_curr_2(n_wall_curr))
+      if ( vacuum_debug ) write(*,*) 'wall_curr(before)', sum(abs(wall_curr)), sum(wall_curr)    
+        
+      if ( (.not. allocated(old_dpsibnd_vec)) .or. (size(old_dpsibnd_vec,1)/= n_dof_starwall) ) then
+        if ( allocated(old_dpsibnd_vec) ) deallocate(old_dpsibnd_vec)
+        allocate( old_dpsibnd_vec(n_dof_starwall) )
+      end if    
+
+      !> WARNING: The following computation of dwall_curr_2 contains the term
+      !!          dwall_curr which refers to the previous time-step
+      write(*,*) 'n_wall_curr', n_wall_curr
+      do k = 1, n_wall_curr
+        ! --- contribution from not distributed matrices
+        dwall_curr_2(k) = response_d_b(k) * (wall_curr(k) - Y_coils0(k)) &
+            + response_d_c(k) * dwall_curr(k)
+
+      end do
+
+      theta = time_evol_theta
+      zeta  = time_evol_zeta
+
+      if  (.not. allocated(tmp_d_s)     ) allocate (tmp_d_s     (n_wall_curr))
+      if  (.not. allocated(inv_tmp_d_s) ) allocate (inv_tmp_d_s (n_wall_curr))
+
+      tmp_d_s(:) = 1.d0 + zeta + tstep * theta * wall_resistivity * sr%d_yy(:)
+      inv_tmp_d_s(:) = 1.0d0 / tmp_d_s(:)
+
+      dwall_curr(:) = 0.0d0
+
+      !> corresponds to matrix A in documentation
+      call extended_matrix_vector(my_id, -(1.d0+zeta), sr%a_ye, inv_tmp_d_s, &
+                                  dpsibnd_vec(:), .false., dwall_curr, .false.)
+      !> corresponds to matrix D in documentation
+      call extended_matrix_vector(my_id, zeta, sr%a_ye, inv_tmp_d_s, &
+                                  old_dpsibnd_vec(:), .false., dwall_curr, .true.) 
+      
+      !> Gathering all terms in dwall_curr
+      dwall_curr(:) = dwall_curr(:)+dwall_curr_2(:)
+      if (index_now <= 1 ) dwall_curr = 0.d0
+
+      !> Evolve wall current
+      wall_curr(:) = wall_curr(:) + dwall_curr(:)
+
+    endif  ! ---- Type of current coupling if ------
+    ! =================================================================================================
+
 
     if (.not. CARIDDI_mode  .and. .not. vacuum_min) then
       call write_wall_vtk(index_now, resistive_wall, my_id)
@@ -2597,8 +2764,8 @@ module vacuum_response
       if ( vacuum_debug .and. resistive_wall ) then
         call log_wall_curr(my_id)
 !        call log_coil_curr()
-     end if
-  end if
+      end if
+    end if
 
     ! --- Extract net toroidal wall current such that it can be written to the macroscopic_vars.dat file (e.g., for ./util/plot_live_data.sh)
     if ( (.not. allocated(net_tor_wall_curr)) .and. (index_start+nstep >0) ) then
@@ -2897,6 +3064,7 @@ module vacuum_response
     ! --- Local variables
     integer :: i, j, k, j2, k2
     real*8, allocatable :: tmp_d_s(:)
+    real*8, ALLOCATABLE :: tmp_d_sii(:)
     real*8  :: theta, zeta
     logical :: update_required
     integer :: ierr,loc_size,ntasks
@@ -2930,7 +3098,9 @@ module vacuum_response
                  .or. ( old_zeta    /= zeta                   ) &
                  .or. ( old_reswall .neqv. resistive_wall     ) &
                  .or. ( .not. allocated(response_d_b)         ) &
+                 .or. ( .not. allocated(response_d_b_i)       ) &
                  .or. ( .not. allocated(response_d_c)         ) &
+                 .or. ( .not. allocated(response_d_c_i)       ) &
                  .or. ( .not. allocated(response_m_e)         ) &
                  .or. ( .not. allocated(response_m_h)         ) &
                  .or. ( .not. allocated(response_m_j)         )
@@ -2945,7 +3115,9 @@ module vacuum_response
 
       ! --- Allocate matrices if required
       if ( .not. allocated(response_d_b) ) allocate( response_d_b(n_wall_curr) )
+      if ( .not. allocated(response_d_b_i) ) allocate( response_d_b_i(n_wall_curr_i) )
       if ( .not. allocated(response_d_c) ) allocate( response_d_c(n_wall_curr) )
+      if ( .not. allocated(response_d_c_i) ) allocate( response_d_c_i(n_wall_curr_i) )
       if ( .not. allocated(response_m_h) ) allocate( response_m_h(n_dof_starwall, n_dof_starwall) )
 
       if( .not. allocated (response_m_a%loc_mat) ) &
@@ -2957,46 +3129,70 @@ module vacuum_response
       ! --- Derived response matrices for time-evolution
       if ( resistive_wall) then
 
-        allocate( tmp_d_s(n_wall_curr) )
+        ! ======================================= EDDY+HALO COUPLING =====================================
+        if (halo_freeb .and. CARIDDI_mode) then
 
-        tmp_d_s(:) = 1.d0 + zeta + tstep * theta * wall_resistivity * sr%d_yy(:)
+          if (.not. ALLOCATED(tmp_d_sii)) ALLOCATE(tmp_d_sii(n_wall_curr_i))
 
-        do j = 1, size(response_m_a%loc_mat,2) 
-          response_m_a%loc_mat(:,j) = -(1.d0+zeta) * sr%a_ye%loc_mat(:,j) / tmp_d_s(:)
-        end do
+          tmp_d_sii(:) = 1.d0 + zeta + tstep * theta * wall_resistivity * sr%dii_yy(:)
 
-        response_d_b(:) = - tstep * wall_resistivity * sr%d_yy(:) / tmp_d_s(:)
-        response_d_c(:) = zeta / tmp_d_s(:)
+          response_d_b_i(:) = - tstep * wall_resistivity * sr%dii_yy / tmp_d_sii(:)
+          response_d_c_i(:) = zeta / tmp_d_sii(:)
 
-        do j = 1, size(response_m_d%loc_mat,2)
-          response_m_d%loc_mat(:,j) = zeta * sr%a_ye%loc_mat(:,j) / tmp_d_s(:)
-        end do
-        
-        ! --- m_e = a_ee - matmul(a_ey, m_a)
-        call matrix_multiplication(my_id,sr%a_ey,mat2=response_m_a, res_mat_not_distr=response_m_e)
-     
-        do j = 1, size(sr%a_ee%loc_mat,1)
-          response_m_e(j+my_id*sr%a_ee%step,:) = response_m_e(j+my_id*sr%a_ee%step,:) + sr%a_ee%loc_mat(j,:)
-        end do
-        call MPI_AllREDUCE(MPI_IN_PLACE,response_m_e,size(response_m_e),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
+          response_d_b(:)   = 0.d0
+          response_d_c(:)   = 0.d0
 
-        response_m_h =0.0
-        response_m_h(sr%a_ee%ind_start:sr%a_ee%ind_end,:) = sr%a_ee%loc_mat(:,:)
-        call MPI_AllREDUCE(MPI_IN_PLACE,response_m_h,size(response_m_h),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
+        else
+        ! ------------------------------- EDDY COUPLING ------------------------------------------------
 
-        ! --- m_j =  matmul(a_ey, m_d)
-        call matrix_multiplication(my_id,sr%a_ey,mat2=response_m_d,res_mat_not_distr=response_m_j)
-        call MPI_AllREDUCE(MPI_IN_PLACE,response_m_j,size(response_m_j),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
-        call  dealloc_distr(response_m_a)
-        call  dealloc_distr(response_m_d)
-        
-        deallocate( tmp_d_s )
+          if (.not. ALLOCATED(tmp_d_s)) allocate( tmp_d_s(n_wall_curr) )
+
+          tmp_d_s(:) = 1.d0 + zeta + tstep * theta * wall_resistivity * sr%d_yy(:)
+
+          response_d_b(:) = - tstep * wall_resistivity * sr%d_yy(:) / tmp_d_s(:)
+          response_d_c(:) = zeta / tmp_d_s(:)
+          
+          response_d_b_i(:) = 0.d0
+          response_d_c_i(:) = 0.d0 
+
+          do j = 1, size(response_m_a%loc_mat,2) 
+            response_m_a%loc_mat(:,j) = -(1.d0+zeta) * sr%a_ye%loc_mat(:,j) / tmp_d_s(:)
+          end do
+
+          do j = 1, size(response_m_d%loc_mat,2)
+            response_m_d%loc_mat(:,j) = zeta * sr%a_ye%loc_mat(:,j) / tmp_d_s(:)
+          end do
+          
+          ! --- m_e = a_ee - matmul(a_ey, m_a)
+          call matrix_multiplication(my_id,sr%a_ey,mat2=response_m_a, res_mat_not_distr=response_m_e)
+      
+          do j = 1, size(sr%a_ee%loc_mat,1)
+            response_m_e(j+my_id*sr%a_ee%step,:) = response_m_e(j+my_id*sr%a_ee%step,:) + sr%a_ee%loc_mat(j,:)
+          end do
+          call MPI_AllREDUCE(MPI_IN_PLACE,response_m_e,size(response_m_e),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
+
+          response_m_h =0.0
+          response_m_h(sr%a_ee%ind_start:sr%a_ee%ind_end,:) = sr%a_ee%loc_mat(:,:)
+          call MPI_AllREDUCE(MPI_IN_PLACE,response_m_h,size(response_m_h),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
+
+          ! --- m_j =  matmul(a_ey, m_d)
+          call matrix_multiplication(my_id,sr%a_ey,mat2=response_m_d,res_mat_not_distr=response_m_j)
+          call MPI_AllREDUCE(MPI_IN_PLACE,response_m_j,size(response_m_j),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
+          call  dealloc_distr(response_m_a)
+          call  dealloc_distr(response_m_d)
+          
+          deallocate( tmp_d_s )
+
+        endif
+       ! ================================================================================================
 
       else ! (Ideal wall)
 
         response_m_a%loc_mat(:,:) = 0.d0
         response_d_b(:)   = 0.d0
         response_d_c(:)   = 0.d0
+        response_d_b_i(:) = 0.d0
+        response_d_c_i(:) = 0.d0
 
         response_m_e=0.0
         response_m_e(sr%a_id%ind_start:sr%a_id%ind_end,:) =sr%a_id%loc_mat(:,:)
@@ -3019,6 +3215,9 @@ module vacuum_response
         if(my_id == 0)   write(*,*) 'd_b:', sum(abs(response_d_b)), sum(response_d_b)
         if(my_id == 0)   write(*,*) '1+d_b:',sum(abs(1.d0+response_d_b)), sum(1.d0+response_d_b)
         if(my_id == 0)   write(*,*) 'd_c:', sum(abs(response_d_c)), sum(response_d_c)
+        if(my_id == 0)   write(*,*) 'd_b_i:', sum(abs(response_d_b_i)), sum(response_d_b_i)
+        if(my_id == 0)   write(*,*) '1+d_b_i:',sum(abs(1.d0+response_d_b_i)), sum(1.d0+response_d_b_i)
+        if(my_id == 0)   write(*,*) 'd_c_i:', sum(abs(response_d_c_i)), sum(response_d_c_i)
 
         test_sum=0.0
         test_sum2=0.0

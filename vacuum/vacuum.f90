@@ -13,6 +13,7 @@ module vacuum
   integer             :: n_dof_bnd                       !< Total number of boundary dofs per harmonic
   integer             :: n_dof_starwall                  !< Total number of boundary dofs in STARWALL response
   logical             :: CARIDDI_mode                    !< CARIDDI or STARWALL
+  logical             :: halo_freeb                      !< Switch on halo current coupling with walls.
   logical             :: vacuum_min                      !< Mode to minimalize memory consumption
   
   !> @name Resistive wall only
@@ -20,8 +21,11 @@ module vacuum
   real*8              :: wall_resistivity                !< Resistivity of the external wall
   logical             :: wall_curr_initialized = .false. !< Have the wall currents been initialized?
   integer             :: n_wall_curr                     !< Number of wall current potentials.
+  integer             :: n_wall_curr_i                   !< Halo coupling: number of internal current potentials (null space)
   real*8, allocatable :: wall_curr(:)                    !< Wall current potentials (\f$Y_k\f$).
   real*8, allocatable :: dwall_curr(:)                   !< Change of wall current potentials (\f$\delta Y_k\f$).
+  real*8, allocatable :: wall_curr_i(:)                  !< Internal wall current potentials (\f$Yi_k\f$).
+  real*8, allocatable :: dwall_curr_i(:)                 !< Change of internal wall current potentials (\f$\delta Yi_k\f$).
   real*8, allocatable :: old_dpsibnd_vec(:)              !< Previous delta Psi values required for time-stepping with zeta/=0
 
   !> Data type for response matrices distributed over the MPI tasks
@@ -38,7 +42,9 @@ module vacuum
   !> @name JOREK vacuum response matrices
   !! Response matrices derived from STARWALL response (w=wall, p=plasma)
   real*8, allocatable  :: response_d_b(:)                !< \f$\hat{B}\f$ in the documentation
+  real*8, ALLOCATABLE  :: response_d_b_i(:)
   real*8, allocatable  :: response_d_c(:)                !< \f$\hat{C}\f$ in the documentation
+  real*8, allocatable  :: response_d_c_i(:)               
   real*8, allocatable  :: response_m_e(:,:)              !< \f$\hat{E}\f$ in the documentation
   real*8, allocatable  :: response_m_h(:,:)              !< \f$\hat{H}\f$ in the documentation
   real*8, allocatable  :: response_m_j(:,:)              !< \f$\hat{J}\f$ in the documentation
@@ -51,6 +57,7 @@ module vacuum
   logical             :: find_pf_coil_currents           !< search for optimal pf_coil currents to build a free-bnd equil? [[jorek-starwall-faqs|fbnd_eq_FAQs]]
   real*8, allocatable :: I_coils(:)                      !< coil currents
   real*8, allocatable :: Y_coils0(:)                     !< imposed STARWALL coil currents source
+  real*8, ALLOCATABLE :: Yi_coils0(:)                    !< imposed STARWALL coil currents in null space
   real*8              :: vertical_FB                     !< a variable for the feedback control of the plasma's vertical position
   real*8              :: radial_FB                       !< a variable for the feedback control of the plasma's radial position   (during equilibrium)
   real*8, allocatable :: bext_tan(:,:)                   !< external tangential field
@@ -96,6 +103,7 @@ module vacuum
     integer :: ncoil                  = -1
     integer :: npot_w                 = -1
     integer :: n_w                    = -1
+    integer :: n_nw                   = -1
     integer :: ntri_w                 = -1
     integer :: n_tor                  = -1
     integer :: n_tor0                 = -1
@@ -136,16 +144,30 @@ module vacuum
     real*8  :: eta_thin_w             = 1. !< Thin wall resistivity of wall triangles
     integer, allocatable :: i_tor(:)
     real*8,  allocatable :: d_yy(:)
+    real*8,  allocatable :: dii_yy(:)
     type(t_distrib_mat)  :: a_ye
     type(t_distrib_mat)  :: a_ey
     type(t_distrib_mat)  :: a_ee
     type(t_distrib_mat)  :: a_id
     type(t_distrib_mat)  :: s_ww
     type(t_distrib_mat)  :: s_ww_inv
+    type(t_distrib_mat)  :: s_ww_ii_inv
+   
+    !!!! Matrices for halo coupling  !!!!
+    type(t_distrib_mat)  :: aeq_el
+    type(t_distrib_mat)  :: a_yie
+    type(t_distrib_mat)  :: a_eyi
+    type(t_distrib_mat)  :: a_eye
+    type(t_distrib_mat)  :: fwtfw_inv
     real*8, allocatable  :: ielsphi_real_w(:,:)
     real*8, allocatable  :: ielsphi_real_J(:,:)
+    ! Electrode mapping Matrices in real space
     real*8, allocatable  :: Jmat_real_w(:,:)
     real*8, allocatable  :: Jmat_real_J(:,:)
+    ! Electrode mapping Matrices in Fourier space
+    real*8, allocatable  :: Jmat_w(:,:) 
+    real*8, allocatable  :: Jmat_J(:,:)
+
     real*8,  allocatable :: xyzpot_w(:,:)
     real*8,  allocatable :: phi0_w(:,:)   !< Toroidal net wall current potentials
     integer, allocatable :: jpot_w(:,:)
@@ -426,6 +448,7 @@ module vacuum
     
     ! --- Preset namelist input parameters.
     CARIDDI_mode         = .false.            !< True if CARIDDI input file
+    halo_freeb           = .false.
     vacuum_min           = .false.
     freeboundary_equil   = .false.
     starwall_equil_coils = .false.
@@ -560,6 +583,8 @@ module vacuum
       if ( resistive_wall ) then
         
         read(file_handle) n_wall_curr, n_dof_starwall
+
+        !if (halo_freeb) .and. (CARIDDI_mode) read(file_handle) n_wall_curr_i
         
         if ( allocated(wall_curr) ) deallocate(wall_curr)
         allocate( wall_curr(n_wall_curr) )
@@ -568,7 +593,17 @@ module vacuum
         if ( allocated(dwall_curr) ) deallocate(dwall_curr)
         allocate( dwall_curr(n_wall_curr) )
         read(file_handle) dwall_curr(:)
-        
+
+        ! if (halo_freeb) .and. (CARIDDI_mode) then
+        !   if ( allocated(wall_curr_i) ) deallocate(wall_curr_i)
+        !   allocate( wall_curr_i(n_wall_curr_i) )
+        !   read(file_handle) wall_curr_i(:)
+          
+        !   if ( allocated(dwall_curr_i) ) deallocate(dwall_curr_i)
+        !   allocate( dwall_curr_i(n_wall_curr_i) )
+        !   read(file_handle) dwall_curr_i(:)
+        ! endif
+          
         if ( allocated(old_dpsibnd_vec) ) deallocate(old_dpsibnd_vec)
         allocate( old_dpsibnd_vec(n_dof_starwall) )
         old_dpsibnd_vec = 0.d0 !###
@@ -658,6 +693,8 @@ module vacuum
         
         call HDF5_integer_reading(file_id,n_wall_curr,"n_wall_curr")
         call HDF5_integer_reading(file_id,n_dof_starwall,"n_dof_starwall")
+
+        if (halo_freeb)  call HDF5_integer_reading(file_id,n_wall_curr_i,"n_wall_curr_i")
         
         if ( allocated(wall_curr) ) deallocate(wall_curr)
         allocate( wall_curr(n_wall_curr) )
@@ -666,6 +703,18 @@ module vacuum
         if ( allocated(dwall_curr) ) deallocate(dwall_curr)
         allocate( dwall_curr(n_wall_curr) )
         call HDF5_array1D_reading(file_id,dwall_curr,"dwall_curr")
+
+        if (halo_freeb .AND. CARIDDI_mode) then
+
+          if ( allocated(wall_curr_i) ) deallocate(wall_curr_i)
+          allocate( wall_curr_i(n_wall_curr_i) )
+          call HDF5_array1D_reading(file_id,wall_curr_i,"wall_curr_i")
+          
+          if ( allocated(dwall_curr_i) ) deallocate(dwall_curr_i)
+          allocate( dwall_curr_i(n_wall_curr_i) )
+          call HDF5_array1D_reading(file_id,dwall_curr_i,"dwall_curr_i")
+
+        endif
         
         if ( allocated(old_dpsibnd_vec) ) deallocate(old_dpsibnd_vec)
         allocate( old_dpsibnd_vec(n_dof_starwall) )
@@ -810,17 +859,39 @@ module vacuum
       write(file_handle) resistive_wall
       if ( resistive_wall ) then
         
-        if ( (.not. allocated(wall_curr)) .or. (.not. allocated(dwall_curr)) .or.                    &
+        if (halo_freeb .AND. CARIDDI_mode) then
+
+          if ( (.not. allocated(wall_curr_i)) .or. (.not. allocated(dwall_curr_i)) .or.                    &
           (.not. allocated(old_dpsibnd_vec)) ) then
-          write(*,*) 'ERROR in mod_vacuum.f90:export_restart_vacuum: Arrays not allocated.'
-          stop
-        end if
+            write(*,*) 'ERROR in mod_vacuum.f90:export_restart_vacuum: Arrays not allocated.'
+            stop
+          end if
+
+
+          write(file_handle) n_wall_curr_i, n_dof_starwall
         
-        write(file_handle) n_wall_curr, n_dof_starwall
+          write(file_handle) wall_curr_i(:)
         
-        write(file_handle) wall_curr(:)
+          write(file_handle) dwall_curr_i(:)
+
+        else
+
+          if ( (.not. allocated(wall_curr)) .or. (.not. allocated(dwall_curr)) .or.                    &
+          (.not. allocated(old_dpsibnd_vec)) ) then
+            write(*,*) 'ERROR in mod_vacuum.f90:export_restart_vacuum: Arrays not allocated.'
+            stop
+          end if
         
-        write(file_handle) dwall_curr(:)
+          write(file_handle) n_wall_curr, n_dof_starwall
+        
+          write(file_handle) wall_curr(:)
+        
+          write(file_handle) dwall_curr(:)
+        
+        endif
+        
+        
+
         
       end if
       
@@ -881,15 +952,32 @@ module vacuum
       call HDF5_char_saving(file_id,t_resistive_wall,"resistive_wall"//char(0))
 
       if ( resistive_wall ) then
-        if ( (.not. allocated(wall_curr)) .or. (.not. allocated(dwall_curr)) .or. &
+
+        if (halo_freeb .AND. CARIDDI_mode) then
+          if ( (.not. allocated(wall_curr_i)) .or. (.not. allocated(dwall_curr_i)) .or. &
            (.not. allocated(old_dpsibnd_vec)) ) then
           write(*,*) 'ERROR in mod_vacuum.f90:export_restart_vacuum: Arrays not allocated.'
           stop
-        end if
-        call HDF5_integer_saving(file_id,n_wall_curr,"n_wall_curr"//char(0))
+          end if
+        else  
+          if ( (.not. allocated(wall_curr)) .or. (.not. allocated(dwall_curr)) .or. &
+            (.not. allocated(old_dpsibnd_vec)) ) then
+            write(*,*) 'ERROR in mod_vacuum.f90:export_restart_vacuum: Arrays not allocated.'
+            stop
+          end if
+        endif
+
+        if (halo_freeb .AND. CARIDDI_mode) then
+          call HDF5_integer_saving(file_id,n_wall_curr_i,"n_wall_curr_i"//char(0))
+          call HDF5_array1D_saving(file_id,wall_curr_i,n_wall_curr_i,"wall_curr_i"//char(0))
+          call HDF5_array1D_saving(file_id,dwall_curr_i,n_wall_curr_i,"dwall_curr_i"//char(0))
+        else
+          call HDF5_integer_saving(file_id,n_wall_curr,"n_wall_curr"//char(0))
+          call HDF5_array1D_saving(file_id,wall_curr,n_wall_curr,"wall_curr"//char(0))
+          call HDF5_array1D_saving(file_id,dwall_curr,n_wall_curr,"dwall_curr"//char(0))
+        endif
+
         call HDF5_integer_saving(file_id,n_dof_starwall,"n_dof_starwall"//char(0))
-        call HDF5_array1D_saving(file_id,wall_curr,n_wall_curr,"wall_curr"//char(0))
-        call HDF5_array1D_saving(file_id,dwall_curr,n_wall_curr,"dwall_curr"//char(0))
         call HDF5_integer_saving(file_id,sr%n_diag_coils,"n_diag_coil"//char(0))
         call HDF5_integer_saving(file_id,sr%n_pol_coils,"n_pf_coil"//char(0))
         call HDF5_integer_saving(file_id,sr%n_rmp_coils,"n_rmp_coil"//char(0))
@@ -1012,15 +1100,24 @@ module vacuum
       call MPI_BCAST( sz_VFB,  2,MPI_INTEGER,0,MPI_COMM_WORLD,ierr)
       
       if ( my_id /= 0 ) then
-        if ( allocated(wall_curr) ) deallocate(wall_curr)
-        allocate( wall_curr(n_wall_curr) )
-        
-        if ( allocated(dwall_curr) ) deallocate(dwall_curr)
-        allocate( dwall_curr(n_wall_curr) )
-        
+
+        if (halo_freeb .AND. CARIDDI_mode) then
+          if ( allocated(wall_curr_i) ) deallocate(wall_curr_i)
+          allocate( wall_curr_i(n_wall_curr_i) )
+          
+          if ( allocated(dwall_curr_i) ) deallocate(dwall_curr_i)
+          allocate( dwall_curr_i(n_wall_curr_i) )
+        else
+          if ( allocated(wall_curr) ) deallocate(wall_curr)
+          allocate( wall_curr(n_wall_curr) )
+          
+          if ( allocated(dwall_curr) ) deallocate(dwall_curr)
+          allocate( dwall_curr(n_wall_curr) )
+        endif
+
+
         if ( allocated(old_dpsibnd_vec) ) deallocate(old_dpsibnd_vec)
         allocate( old_dpsibnd_vec(n_dof_starwall) )
-        
         if ( allocated(net_tor_wall_curr) ) deallocate(net_tor_wall_curr)
         if ( allocated(diag_coil_curr) )    deallocate(diag_coil_curr)
         if ( allocated(pf_coil_curr  ) )    deallocate(pf_coil_curr)
@@ -1052,8 +1149,15 @@ module vacuum
           end if
         end if
       end if
-      call MPI_BCAST(wall_curr,n_wall_curr,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
-      call MPI_BCAST(dwall_curr,n_wall_curr,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
+
+      if (halo_freeb .AND. CARIDDI_mode) then
+        call MPI_BCAST(wall_curr_i,n_wall_curr_i,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
+        call MPI_BCAST(dwall_curr_i,n_wall_curr_i,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
+      else
+        call MPI_BCAST(wall_curr,n_wall_curr,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
+        call MPI_BCAST(dwall_curr,n_wall_curr,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
+      endif
+
       call MPI_BCAST(old_dpsibnd_vec,n_dof_starwall,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr) 
       call MPI_BCAST(wall_curr_initialized,1,MPI_LOGICAL,0,MPI_COMM_WORLD,ierr)
       if (         sz_net  > 0 ) call MPI_BCAST(net_tor_wall_curr, sz_net               ,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
@@ -1269,7 +1373,7 @@ module vacuum
 
       if (allocated(I_elec_w)) deallocate(I_elec_w)
       allocate(I_elec_w(sr%n_electrode_w))
-      I_elec_w = 0.d0    
+      I_elec_w = 0.d0 
 
     case ('gauss') 
       nsub_ctrl = n_gauss
@@ -1624,6 +1728,20 @@ module vacuum
 
       Jn_bez(:) = Jn_bez_mat(:,1)
 
+      !wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww
+      !===================  N.B. We use the CARIDDI-computed matrices in JOREK space to map to the electrode surfaces ===========
+      ! =========================================================================================================================
+      
+      ! Shell
+      do i =1,sr%n_electrode_J
+        I_elec_J(i) = sum(sr%Jmat_J(i,:)*Jn_bez(:))
+      end do
+
+      ! Wall
+      do i =1,sr%n_electrode_w
+        I_elec_w(i) = sum(sr%Jmat_w(i,:)*Jn_bez(:))
+      end do
+
       if (debug_Jn) then
 
         !Debugging
@@ -1643,6 +1761,8 @@ module vacuum
           CLOSE(12)
         endif
       endif
+
+
 
       if (reconvert_to_real) then
 
@@ -1740,7 +1860,7 @@ module vacuum
         endif
 
 
-      endif
+      endif ! reconvert2real
   end select
   write(*,*) 'Finished get_Ielec_halo'
   end subroutine get_Ielec_halo

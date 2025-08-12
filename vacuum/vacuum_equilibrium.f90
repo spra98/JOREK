@@ -225,19 +225,34 @@ module vacuum_equilibrium
       i_start_pf = sr%ind_start_pol_coils
       i_end_pf   = i_start_pf + sr%n_pol_coils -1
       if ( .not. allocated(wall_curr) )       allocate( wall_curr(n_wall_curr) ) 
+      if ( .not. allocated(wall_curr_i) )     allocate( wall_curr_i(n_wall_curr_i) ) 
       if ( .not. allocated (potentials_real)) allocate(potentials_real(sr%ncoil))      
       wall_curr       = 0.d0
+      wall_curr_i     = 0.d0
       potentials_real = 0.d0
       potentials_real(i_start_pf:i_end_pf) =  I_coils(i_start_pf:i_end_pf) * mu_zero
 
       offset = sr%ind_start_coils
-      do i = 1, n_wall_curr
-        if ( (i>=sr%s_ww_inv%ind_start) .and. (i<=sr%s_ww_inv%ind_end) ) then
-          wall_curr(i) = & 
-          sum(sr%s_ww_inv%loc_mat(i-my_id*sr%s_ww_inv%step,offset:offset+sr%ncoil -1) *potentials_real(:))
-        endif
-      end do    
+
+      if (CARIDDI_mode .AND. halo_freeb) then
+        do i = 1, n_wall_curr_i
+          if ( (i>=sr%s_ww_ii_inv%ind_start) .and. (i<=sr%s_ww_ii_inv%ind_end) ) then
+            wall_curr_i(i) = & 
+            sum(sr%s_ww_ii_inv%loc_mat(i-my_id*sr%s_ww_ii_inv%step,offset:offset+sr%ncoil -1) *potentials_real(:))
+          endif
+        end do    
+        call MPI_ALLReduce(MPI_IN_PLACE, wall_curr_i, size(wall_curr_i),MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,ierr) 
+      else     
+        do i = 1, n_wall_curr
+          if ( (i>=sr%s_ww_inv%ind_start) .and. (i<=sr%s_ww_inv%ind_end) ) then
+            wall_curr(i) = & 
+            sum(sr%s_ww_inv%loc_mat(i-my_id*sr%s_ww_inv%step,offset:offset+sr%ncoil -1) *potentials_real(:))
+          endif
+        end do    
         call MPI_ALLReduce(MPI_IN_PLACE, wall_curr, size(wall_curr),MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,ierr)
+    
+      endif
+
     endif
     
     ilarge = a_mat%nnz
@@ -282,10 +297,21 @@ module vacuum_equilibrium
                 if (starwall_equil_coils) then
                   B_tan_coil_i     = 0.d0
                   B_tan_coil_i_loc = 0.d0
-                  if (i_resp_st>=sr%a_ey%ind_start .AND. i_resp_st<=sr%a_ey%ind_end) then
-                    B_tan_coil_i_loc  = - sum (sr%a_ey%loc_mat(i_resp_st-my_id*sr%a_ey%step,:) * wall_curr(:) )
-                  endif
-                  call MPI_Reduce(B_tan_coil_i_loc, B_tan_coil_i, 1, MPI_DOUBLE_PRECISION,MPI_SUM,0,MPI_COMM_WORLD,ierr)
+
+                  if (CARIDDI_mode .AND. halo_freeb) then ! HALO
+                    if (i_resp_st>=sr%a_eyi%ind_start .AND. i_resp_st<=sr%a_eyi%ind_end) then
+                      B_tan_coil_i_loc  = - sum (sr%a_eyi%loc_mat(i_resp_st-my_id*sr%a_eyi%step,:) * wall_curr_i(:) )
+                    endif
+                  
+                    call MPI_Reduce(B_tan_coil_i_loc, B_tan_coil_i, 1, MPI_DOUBLE_PRECISION,MPI_SUM,0,MPI_COMM_WORLD,ierr)
+                  
+                  else ! NOT HALO
+
+                    if (i_resp_st>=sr%a_ey%ind_start .AND. i_resp_st<=sr%a_ey%ind_end) then
+                      B_tan_coil_i_loc  = - sum (sr%a_ey%loc_mat(i_resp_st-my_id*sr%a_ey%step,:) * wall_curr(:) )
+                    endif
+                    call MPI_Reduce(B_tan_coil_i_loc, B_tan_coil_i, 1, MPI_DOUBLE_PRECISION,MPI_SUM,0,MPI_COMM_WORLD,ierr)
+                  endif ! HALO
                 else
                   B_tan_coil_i         =   sum ( I_coils(:) * bext_tan(i_resp,:) )  
                 endif

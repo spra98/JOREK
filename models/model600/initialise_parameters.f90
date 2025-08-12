@@ -101,7 +101,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 rho_file, T_file, Ti_file, Te_file, ffprime_file,   &
                 rot_file, normalized_velocity_profile,              &
                 freeboundary_equil, freeboundary,  freeb_change_indices, &
-                resistive_wall,                                     &
+                resistive_wall,                         &
                 wall_resistivity, wall_resistivity_fact,            &
                 bc_natural_open,                                    &
                 use_mumps_eq, use_pastix_eq, use_strumpack_eq,      &
@@ -210,7 +210,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 D_perp_imp, spi_quantity_bg, pellet_density_bg,     &
                 visco_par_heating, constant_imp_source,             &
                 T_min_ZKpar,Ti_min_ZKpar,Te_min_ZKpar,              &
-                CARIDDI_mode, use_newton, maxNewton, gamma_Newton,  &
+                CARIDDI_mode, halo_freeb,use_newton, maxNewton, gamma_Newton,  &
                 alpha_Newton, vacuum_min, strumpack_matching,       &
                 visco_old_setup, visco_heating, eta_coul_log_dep,   &
                 export_polar_boundary, xpoint_search_tries,         &
