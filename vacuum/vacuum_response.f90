@@ -1210,6 +1210,8 @@ module vacuum_response
     n_dof_starwall = sr%nd_bez
     n_wall_curr    = sr%n_w
     n_wall_curr_i  = sr%n_nw
+    n_wall_curr_e  = sr%n_electrode_w-1
+
     ! --- Allocate matrices.
     if ( my_id /= 0 ) then
       if (allocated(sr%i_tor)   ) deallocate(sr%i_tor);    allocate(sr%i_tor(sr%n_tor))
@@ -2037,7 +2039,7 @@ module vacuum_response
     call update_response(my_id, tstep, resistive_wall)
 
     ! --- Perform the time-stepping for the wall currents.
-    if ( resistive_wall .and.  (sr%n_tor>0) ) call evolve_wall_currents(my_id, psibnd_vec, dpsibnd_vec)
+    if ( resistive_wall .and.  (sr%n_tor>0) ) call evolve_wall_currents(my_id, psibnd_vec, dpsibnd_vec, a_mat)
 
     ! --- Update old_dpsibnd_vec  (used for updating the wall currents in the next iteration)
     old_dpsibnd_vec(:) = dpsibnd_vec(:)
@@ -2401,14 +2403,31 @@ module vacuum_response
           end do
         endif
         if ( .not. allocated(dwall_curr_i) ) then
-          write(*,*) 'Allocating dwall_curr with', n_wall_curr_i
+          write(*,*) 'Allocating dwall_curr_i with', n_wall_curr_i
           allocate( dwall_curr_i(n_wall_curr_i) )
           do k = 1, n_wall_curr_i
             dwall_curr_i(k) = 0.d0!- sum( sr%a_ye(k,:) * dpsibnd_vec(:) )
           end do
         end if
+        if ( (allocated(wall_curr_e)) .and. (.not. wall_curr_initialized) ) &
+          deallocate(wall_curr_e)
+        if ( (allocated(dwall_curr_e)) .and. (.not. wall_curr_initialized) ) &
+          deallocate(dwall_curr_e)
 
-        !wwwwwwwwwwwwwwwwwwww  TO BE EXTENDED WITH wall_curr_e wwwwwwwwwwwwwwwwwwwwwwwwwwwwww
+        if ( .not. allocated(wall_curr_e) ) then
+          allocate( wall_curr_e(n_wall_curr_e) )
+          do k = 1, n_wall_curr_e
+            wall_curr_e(k) = 0.d0! 
+          end do
+        endif
+
+        if ( .not. allocated(dwall_curr_e) ) then
+          write(*,*) 'Allocating dwall_curr_e with', n_wall_curr_e
+          allocate( dwall_curr_e(n_wall_curr_e) )
+          do k = 1, n_wall_curr_e
+            dwall_curr_e(k) = 0.d0!- sum( sr%a_ye(k,:) * dpsibnd_vec(:) )
+          end do
+        end if
 
       else
         ! ======================= EDDY COUPLING ===================================
@@ -2632,10 +2651,13 @@ module vacuum_response
   
   
   !> Perform the time-evolution of the wall currents (resistive wall).
-  subroutine evolve_wall_currents(my_id, psibnd_vec, dpsibnd_vec)
+  subroutine evolve_wall_currents(my_id, psibnd_vec, dpsibnd_vec, a_mat)
     
     use phys_module, only: index_now, index_start, nstep, resistive_wall, time_evol_theta, time_evol_zeta, tstep
     use mpi_mod
+    use nodes_elements
+    use data_structure, only: type_SP_MATRIX
+
     
     implicit none
     
@@ -2643,18 +2665,21 @@ module vacuum_response
     integer, intent(in) :: my_id
     real*8,  intent(in) :: psibnd_vec (n_dof_starwall) !< Vector of Psi boundary values
     real*8,  intent(in) :: dpsibnd_vec(n_dof_starwall) !< Vector of deltaPsi boundary values
+    type(type_SP_MATRIX):: a_mat
     
     ! --- Local variables
     integer              :: k, k2
     integer              :: ierr
     real *8, allocatable :: dwall_curr_2(:)
     real *8, allocatable :: dwall_curr_i2(:)   
+    real *8, allocatable :: dwall_curr_e2(:)      
     real *8, allocatable :: tmp_coil_curr(:)
     real *8              :: zeta, theta
     real *8, allocatable :: tmp_d_s(:)
     real *8, allocatable :: inv_tmp_d_s(:)
     real *8, allocatable :: tmp_d_sii(:)
     real *8, allocatable :: inv_tmp_d_sii(:)
+    real*8,  ALLOCATABLE :: I_elec_w(:), I_elec_J(:) , diag_1(:)
 
 
     if (halo_freeb .and. CARIDDI_mode) then
@@ -2662,9 +2687,11 @@ module vacuum_response
       ! ================================ EDDY + HALO COUPLING =============================================
       ! ===================================================================================================
 
-      
+      ! --------------------------------- INTERNAL DOFS ------------------------------------------------
+
       if  (.not. allocated(dwall_curr_i2)) allocate (dwall_curr_i2(n_wall_curr_i))
-      if ( vacuum_debug ) write(*,*) 'wall_curr(before)', sum(abs(wall_curr_i)), sum(wall_curr_i)    
+      if  (.not. allocated(dwall_curr_e2)) allocate (dwall_curr_e2(n_wall_curr_e))
+      if ( vacuum_debug ) write(*,*) 'Halo: wall_curr_i and wall_curr_e(before)', sum(abs(wall_curr_i)), sum(wall_curr_i) ,sum(abs(wall_curr_e)), sum(wall_curr_e)   
         
 
       !> WARNING: The following computation of dwall_curr_2 contains the term
@@ -2672,8 +2699,8 @@ module vacuum_response
       write(*,*) 'n_wall_curr_i', n_wall_curr_i
       do k = 1, n_wall_curr_i
       
-        ! --- contribution from not distributed matrices
-        dwall_curr_i2(k) = response_d_b_i(k) * (wall_curr_i(k)  - Yi_coils0(k)) &  
+      ! --- contribution from not distributed matrices
+      dwall_curr_i2(k) = response_d_b_i(k) * (wall_curr_i(k)  - Yi_coils0(k)) &  
           + response_d_c_i(k) * dwall_curr_i(k)
 
       end do
@@ -2703,9 +2730,21 @@ module vacuum_response
       if (index_now <= 1 ) dwall_curr_i = 0.d0
       wall_curr_i(:) = wall_curr_i(:) + dwall_curr_i(:) 
 
-      ! ---- To be expended with wall_curr_e ---------------
+      ! ------------------------------------  CROSSING DOFS ------------------------------------------------
 
-        
+      ! Get electrode current from Jn
+      call get_Ielec_halo(node_list, element_list, bnd_elm_list, bnd_node_list, 'gauss', my_id, a_mat%i_tor_min, a_mat%i_tor_max, I_elec_J, I_elec_w)
+
+      ! iwe = (FwtFw)^-1 * iel_w
+
+      write(21,*) 'FwtFw: infos', sr%fwtfw_inv%distrib, sr%fwtfw_inv%row_wise, sr%fwtfw_inv%ind_start, sr%fwtfw_inv%ind_end, sr%fwtfw_inv%step
+      21 format(1x, 'distributed', L2, ',rowwise?', L2, ',ind_start of chunk:', I4, ',ind_end of chunk:', I4, ', step' , I4)
+
+      if (.not. allocated(diag_1)) ALLOCATE (diag_1(n_wall_curr_e))
+      diag_1(:) = 1.d0
+      call extended_matrix_vector(my_id, 1.d0, sr%fwtfw_inv, diag_1, &
+                                  I_elec_w, .false., wall_curr_e, .true.)
+
     else
 
       ! ---------------------------------------------------------------------------------------------------
