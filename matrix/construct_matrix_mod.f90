@@ -746,10 +746,6 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
                                   resistive_wall, my_ind_min, my_ind_max, rhs_local, tstep, index_now, a_mat)
   endif
   
-  if (my_id == 0) then
-    call get_Ielec_halo(node_list, element_list, bnd_elm_list, bnd_node_list, 'gauss', my_id, a_mat%i_tor_min, a_mat%i_tor_max, I_elec_J, I_elec_w)
-  endif
-
   if ( .not. harmonic_matrix ) then 
     ! --- Summarise element_matrix comparison
 #ifdef COMPARE_ELEMENT_MATRIX

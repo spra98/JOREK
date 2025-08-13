@@ -593,11 +593,16 @@ module vacuum_response
       
       sr%nd_bez = read_intparam_parallel(filehandle, 'nd_bez', disp)
 
-      if (CARIDDI_mode) then ! .and. add version 7 if clause
+      if (CARIDDI_mode .and. halo_freeb) then ! .and. add version 7 if clause
         sr%n_pts_real_w = read_intparam_parallel(filehandle, 'n_pts_real_w', disp)
         sr%n_pts_real_J = read_intparam_parallel(filehandle, 'n_pts_real_J', disp)
         sr%n_electrode_w = read_intparam_parallel(filehandle, 'n_electrode_w', disp)
         sr%n_electrode_J = read_intparam_parallel(filehandle, 'n_electrode_J', disp)
+      else 
+        sr%n_pts_real_w = 0
+        sr%n_pts_real_J = 0
+        sr%n_electrode_w = 0
+        sr%n_electrode_J = 0       
       end if
 
       if ( sr%file_version >= 5 ) then
@@ -608,10 +613,9 @@ module vacuum_response
       sr%ncoil  = read_intparam_parallel(filehandle, 'ncoil' , disp)
       sr%npot_w = read_intparam_parallel(filehandle, 'npot_w', disp)
       sr%n_w    = read_intparam_parallel(filehandle, 'n_w'   , disp)
-      if (halo_freeb) then
+      if (CARIDDI_mode .and. halo_freeb) then
         ! Read null space dimension for wall
-        if (CARIDDI_mode) sr%n_nw   =  read_intparam_parallel(filehandle, 'n_nw'   , disp)
-
+        sr%n_nw   =  read_intparam_parallel(filehandle, 'n_nw'   , disp)
       else
         sr%n_w = 0
       endif
@@ -709,8 +713,8 @@ module vacuum_response
       end if
 
       call read_array_not_distr(filehandle, 'yy', (/sr%n_w,0/), disp, float1d=sr%d_yy)
-      if (halo_freeb) then
-        if (CARIDDI_mode) call read_array_not_distr(filehandle, 'yy_ii', (/sr%n_nw,0 /), disp, float1d=sr%dii_yy   )
+      if (CARIDDI_mode .and. halo_freeb) then
+        call read_array_not_distr(filehandle, 'yy_ii', (/sr%n_nw,0 /), disp, float1d=sr%dii_yy   )
       endif
     end if
 
@@ -718,29 +722,29 @@ module vacuum_response
 
     call MPI_BCAST(sr%n_w,    1, MPI_INTEGER, 0, MPI_COMM_WORLD, err)
     ! Dimension of wall dofs' null space
-    if (CARIDDI_mode) call MPI_BCAST(sr%n_nw,   1, MPI_INTEGER, 0, MPI_COMM_WORLD, err)
+    if (CARIDDI_mode .and. halo_freeb) call MPI_BCAST(sr%n_nw,   1, MPI_INTEGER, 0, MPI_COMM_WORLD, err)
     call MPI_BCAST(sr%nd_bez, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, err)
-    call MPI_BCAST(sr%n_pts_real_w, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, err)  
-    call MPI_BCAST(sr%n_pts_real_J, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, err)
+    if (CARIDDI_mode .and. halo_freeb) call MPI_BCAST(sr%n_pts_real_w, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, err)  
+    if (CARIDDI_mode .and. halo_freeb) call MPI_BCAST(sr%n_pts_real_J, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, err)
     call MPI_bcast(sr%ind_start_coils,     1, MPI_INTEGER,  0, MPI_COMM_WORLD, err)
     call MPI_bcast(sr%ncoil,                   1, MPI_INTEGER,  0, MPI_COMM_WORLD, err)
 
     ! Last parameter defines how matrix should be distributed: .false. - rowwise; .true. - columnwise
     call read_array_par    (filehandle, 'ye',       (/sr%n_w,sr%nd_bez/),    disp, my_id,  sr%a_ye,     .false.) 
-    if (halo_freeb) then
-      if (CARIDDI_mode) call read_array_par(filehandle, 'yie', (/sr%n_nw, sr%nd_bez/), disp, my_id, sr%a_yie, .false. ) 
+    if (CARIDDI_mode .and. halo_freeb) then
+      call read_array_par(filehandle, 'yie', (/sr%n_nw, sr%nd_bez/), disp, my_id, sr%a_yie, .false. ) 
     endif
     call read_array_par    (filehandle, 'ey',       (/sr%nd_bez,sr%n_w/),    disp, my_id,  sr%a_ey,     .true. )
-    if (halo_freeb) then
-      if (CARIDDI_mode) call read_array_par  (filehandle, 'eyi',    (/sr%nd_bez,sr%n_nw/),    disp, my_id,  sr%a_eyi,     .true. )
-      if (CARIDDI_mode) call read_array_par  (filehandle, 'eye',    (/sr%nd_bez,sr%n_electrode_w-1/),    disp, my_id,  sr%a_eye,  .true. )
+    if (CARIDDI_mode .and. halo_freeb) then
+      call read_array_par  (filehandle, 'eyi',    (/sr%nd_bez,sr%n_nw/),    disp, my_id,  sr%a_eyi,     .true. )
+      call read_array_par  (filehandle, 'eye',    (/sr%nd_bez,sr%n_electrode_w-1/),    disp, my_id,  sr%a_eye,  .true. )
     endif
 
     call read_array_par    (filehandle, 'ee',       (/sr%nd_bez,sr%nd_bez/), disp, my_id,  sr%a_ee,     .true. )
     
     ! =========================================  Aeq_el =============================================================
-    if (halo_freeb) then
-      if (CARIDDI_mode)   call read_array_par(filehandle, 'eq_el',  (/sr%nd_bez,sr%n_electrode_J-1/), disp, my_id,  sr%aeq_el,     .true. )
+    if (CARIDDI_mode .and. halo_freeb) then
+      call read_array_par(filehandle, 'eq_el',  (/sr%nd_bez,sr%n_electrode_J-1/), disp, my_id,  sr%aeq_el,     .true. )
     endif
     ! ============================== S_ww_inv, S_ww_ii_inv ===========================================================
     if (.not. vacuum_min) then
@@ -2008,7 +2012,7 @@ module vacuum_response
     logical, save  :: PF_perturbation = .true.
     integer  :: ierr,i
     real*8, allocatable :: rhs_contrib_arr(:)
-    real*8, allocatable :: diag_1(:)
+    real*8, allocatable :: diag_1(:), diag_e(:), diag_el_eq(:)
 
     if ( sr%n_tor == 0 ) then
       write(*,*) 'Skipping vacuum_boundary_integral since sr%n_tor==0.'
@@ -2026,7 +2030,7 @@ module vacuum_response
     if ( (sr%ncoil /= 0) ) then    !avoid it when using COIL_FIELD
       call coil_current_source(my_id)
     else
-      if (halo_freeb) then
+      if (halo_freeb .and. CARIDDI_mode) then
         if (.not. allocated (Yi_coils0)) allocate(Yi_coils0(n_wall_curr_i))
         Yi_coils0(:) = 0.d0
       else
@@ -2053,17 +2057,48 @@ module vacuum_response
     allocate(rhs_contrib_arr(n_dof_starwall))
     rhs_contrib_arr=0.0
     if (resistive_wall) then
-      if (.not. allocated(diag_1)) allocate(diag_1(n_wall_curr))
-      diag_1(:) = ( 1.d0 + response_d_b(:) )
-      !> corresponds to matrix F in documentation
-      call extended_matrix_vector(my_id,  1.0d0, sr%a_ey, diag_1, &
-          wall_curr(:), .true., rhs_contrib_arr, .false.)
-      !> corresponds to matrix G in documentation
-      call extended_matrix_vector(my_id,  1.0d0, sr%a_ey, response_d_c, &
-          dwall_curr(:), .true., rhs_contrib_arr, .false.)
-      !> corresponds to matrix V in documentation
-      call extended_matrix_vector(my_id, -1.0d0, sr%a_ey, response_d_b, &
-          Y_coils0(:), .true., rhs_contrib_arr, .true.)
+      
+      if (CARIDDI_mode .and. halo_freeb) then
+
+        if (.not. allocated(diag_1)) allocate(diag_1(n_wall_curr_i))
+        diag_1(:) = ( 1.d0 + response_d_b_i(:) )
+        !> corresponds to matrix F_i in documentation
+        call extended_matrix_vector(my_id,  1.0d0, sr%a_eyi, diag_1, &
+            wall_curr_i(:), .true., rhs_contrib_arr, .false.)
+        !> corresponds to matrix G_i in documentation
+        call extended_matrix_vector(my_id,  1.0d0, sr%a_eyi, response_d_c_i, &
+            dwall_curr_i(:), .true., rhs_contrib_arr, .false.)
+        !> corresponds to matrix V_i in documentation
+        call extended_matrix_vector(my_id, -1.0d0, sr%a_eyi, response_d_b_i, &
+            Yi_coils0(:), .true., rhs_contrib_arr, .false.)
+        !> corresponds to matrix F_e in documentation
+        if (.not. allocated(diag_e) ) allocate(diag_e(n_wall_curr_e))
+        diag_e(:) = 1.d0
+        call extended_matrix_vector(my_id, 1.d0, sr%a_eye, diag_e, &
+               wall_curr_e(:), .true., rhs_contrib_arr, .false.)
+        !> corresponds to matrix Qel_eq
+        if (.not. allocated(diag_el_eq) ) allocate(diag_el_eq(sr%n_electrode_J-1))
+        diag_el_eq(:) = 1.d0
+        call extended_matrix_vector(my_id, -1.d0, sr%aeq_el, diag_el_eq, &
+              I_elec_J(:), .TRUE., rhs_contrib_arr, .true.)
+
+        
+      else
+
+        if (.not. allocated(diag_1)) allocate(diag_1(n_wall_curr))
+        diag_1(:) = ( 1.d0 + response_d_b(:) )
+        !> corresponds to matrix F in documentation
+        call extended_matrix_vector(my_id,  1.0d0, sr%a_ey, diag_1, &
+            wall_curr(:), .true., rhs_contrib_arr, .false.)
+        !> corresponds to matrix G in documentation
+        call extended_matrix_vector(my_id,  1.0d0, sr%a_ey, response_d_c, &
+            dwall_curr(:), .true., rhs_contrib_arr, .false.)
+        !> corresponds to matrix V in documentation
+        call extended_matrix_vector(my_id, -1.0d0, sr%a_ey, response_d_b, &
+            Y_coils0(:), .true., rhs_contrib_arr, .true.)
+
+      endif
+
     end if
 
 #ifdef __GFORTRAN__
@@ -2679,7 +2714,7 @@ module vacuum_response
     real *8, allocatable :: inv_tmp_d_s(:)
     real *8, allocatable :: tmp_d_sii(:)
     real *8, allocatable :: inv_tmp_d_sii(:)
-    real*8,  ALLOCATABLE :: I_elec_w(:), I_elec_J(:) , diag_1(:)
+    real*8,  ALLOCATABLE :: diag_1(:)
 
 
     if (halo_freeb .and. CARIDDI_mode) then
@@ -2733,7 +2768,7 @@ module vacuum_response
       ! ------------------------------------  CROSSING DOFS ------------------------------------------------
 
       ! Get electrode current from Jn
-      call get_Ielec_halo(node_list, element_list, bnd_elm_list, bnd_node_list, 'gauss', my_id, a_mat%i_tor_min, a_mat%i_tor_max, I_elec_J, I_elec_w)
+      call get_Ielec_halo(node_list, element_list, bnd_elm_list, bnd_node_list, 'gauss', my_id, a_mat%i_tor_min, a_mat%i_tor_max)
 
       ! iwe = (FwtFw)^-1 * iel_w
 

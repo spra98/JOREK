@@ -30,6 +30,8 @@ module vacuum
   real*8, allocatable :: wall_curr_e(:)                  !< External wall current potentials (\f$Yi_k\f$).
   real*8, allocatable :: dwall_curr_e(:)                 !< Change of external wall current potentials (\f$\delta Yi_k\f$).
   real*8, allocatable :: old_dpsibnd_vec(:)              !< Previous delta Psi values required for time-stepping with zeta/=0
+  real*8, allocatable :: I_elec_w(:)                     !< Wall electrode current for halo coupling
+  real*8, allocatable :: I_elec_J(:)                     !< Shell electrode current for halo coupling
 
   !> Data type for response matrices distributed over the MPI tasks
   type :: t_distrib_mat
@@ -1335,7 +1337,7 @@ module vacuum
   end subroutine print_distr
 
   !> Compute J_normal in the mapping points written by CARIDDI, then get I_electrode on shell and wall
-  subroutine get_Ielec_halo(node_list, element_list, bnd_elm_list, bnd_node_list, mapping, my_id, i_tor_min, i_tor_max, I_elec_J, I_elec_w)
+  subroutine get_Ielec_halo(node_list, element_list, bnd_elm_list, bnd_node_list, mapping, my_id, i_tor_min, i_tor_max)
  
   use constants
   use basis_at_gaussian
@@ -1352,7 +1354,7 @@ module vacuum
   type (type_bnd_node_list),    intent(in)    :: bnd_node_list
   character(len=*),             intent(in)    :: mapping
   integer,                      intent(in)    :: my_id, i_tor_min, i_tor_max
-  real*8, allocatable ,         intent(out)   :: I_elec_J(:), I_elec_w(:)
+  !real*8, allocatable ,         intent(out)   :: I_elec_J(:), I_elec_w(:)
 
   ! Local variables
   type(type_node)       :: node_k
