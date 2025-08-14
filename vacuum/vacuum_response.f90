@@ -2057,7 +2057,8 @@ module vacuum_response
     allocate(rhs_contrib_arr(n_dof_starwall))
     rhs_contrib_arr=0.0
     if (resistive_wall) then
-      
+
+      ! ===============================  Btan (eddy + halo) ===================================== 
       if (CARIDDI_mode .and. halo_freeb) then
 
         if (.not. allocated(diag_1)) allocate(diag_1(n_wall_curr_i))
@@ -2084,6 +2085,7 @@ module vacuum_response
 
         
       else
+      ! ===============================  Btan (eddy) ===================================== 
 
         if (.not. allocated(diag_1)) allocate(diag_1(n_wall_curr))
         diag_1(:) = ( 1.d0 + response_d_b(:) )
@@ -2108,12 +2110,12 @@ module vacuum_response
     !$omp parallel do                                                                                         &
     !$omp default(none)                                                                                       &    
     !$omp shared(my_id, a_mat, rhs_loc, bnd_elm_list, bnd_node_list, node_list, index_min, index_max,          &
-    !$omp   response_m_e, response_m_h, response_m_j, H1, HZ, sr,                 &
+    !$omp   response_m_e, response_m_e_i, response_m_h, response_m_j, response_m_j_i, H1, HZ, sr,              &
     !$omp   bext_tan, I_coils, wall_curr, dwall_curr, psibnd_vec, dpsibnd_vec,psibnd_coils,                   &
 #ifdef __GFORTRAN__
     !$omp   wgauss_copy,                                                                                      &
 #endif
-    !$omp   starwall_equil_coils,  Y_coils0,rhs_contrib_arr, resistive_wall) &
+    !$omp   starwall_equil_coils,  Y_coils0,rhs_contrib_arr, resistive_wall, CARIDDI_mode, halo_freeb) &
     !$omp private(m_bndelem, bndelem_m, x_s, y_s, l_vertex, l_dof, l_node,l_dir, l_node_bnd,                  &
     !$omp   l_index, l_size, l_tor, l_row_j, l_row_psi, ms, dA, m_plane,common_prefactor,                     &
     !$omp   testfunc_l, i_vertex, i_dof, i_node, i_dir, i_node_bnd, i_index, i_size, i_starwall,              &
@@ -2237,7 +2239,11 @@ module vacuum_response
                         sparsepos_pp = det_sparse_pos(l_row_psi, j_col_psi, index_min, a_mat)
 
                         ! --- Vacuum response contribution to the lhs of the current equation
-                        amat_contrib = - common_prefactor * response_m_e(i_resp, j_resp)
+                        if (CARIDDI_mode .and. halo_freeb) then
+                          amat_contrib = - common_prefactor * response_m_e_i(i_resp, j_resp)
+                        else
+                          amat_contrib = - common_prefactor * response_m_e(i_resp, j_resp)
+                        endif
                         !$omp atomic
                         a_mat%val(sparsepos_jp) = a_mat%val(sparsepos_jp) + amat_contrib
 
@@ -2246,9 +2252,14 @@ module vacuum_response
                   end do L_JB
 
                   ! --- Contribution of vacuum response to the rhs of the current equation
-
-                  rhs_contrib = sum( response_m_h(i_resp,:) * psibnd_vec(:))                     &
+                  if (CARIDDI_mode .and. halo_freeb) then 
+                    rhs_contrib = sum( response_m_h(i_resp,:) * psibnd_vec(:))                     &
+                              + sum( response_m_j_i(i_resp,:) * dpsibnd_vec(:))
+                  else
+                  
+                    rhs_contrib = sum( response_m_h(i_resp,:) * psibnd_vec(:))                     &
                               + sum( response_m_j(i_resp,:) * dpsibnd_vec(:))
+                  endif
 
                   if ( (l_tor == 1) .and. (sr%i_tor(1) == 1) .and. (.not. starwall_equil_coils)) &
                     rhs_contrib = rhs_contrib - sum( bext_tan(i_resp_0, :) * I_coils(:) )        &
@@ -2753,7 +2764,7 @@ module vacuum_response
 
       dwall_curr_i(:) = 0.d0
 
-      ! N.B. Sign change since Ci_star from CARIDDI already contains the minus sign! See documentation
+      ! N.B. Sign change is present! Since Ci_star from CARIDDI already contains the minus sign! See documentation
       !> corresponds to matrix A_i in documentation
       call extended_matrix_vector(my_id, (1.d0+zeta), sr%a_yie, inv_tmp_d_sii, &
                                 dpsibnd_vec(:), .false., dwall_curr_i, .false.) 
@@ -2916,8 +2927,7 @@ module vacuum_response
     
   end subroutine evolve_wall_currents
   
-  
-  
+
   !> Reconstruct the potential values at the wall triangle nodes.
   !!
   !! To reconstruct the physical wall potentials from the ones we work 
@@ -3145,6 +3155,9 @@ module vacuum_response
     real*8  :: test_sum,test_sum2
     type(t_distrib_mat)  :: response_m_d                   !< \f$\hat{D}\f$ in the documentation
     type(t_distrib_mat)  :: response_m_a                   !< \f$\hat{A}\f$ in the documentation
+    type(t_distrib_mat)  :: response_m_d_i                 !< \f$\hat{D_i}\f$ in the documentation
+    type(t_distrib_mat)  :: response_m_a_i                 !< \f$\hat{A_i}\f$ in the documentation
+
 
 
 ! --- Local variables to store the previous values of some parameters.
@@ -3166,18 +3179,31 @@ module vacuum_response
     call MPI_COMM_SIZE(MPI_COMM_WORLD, ntasks, ierr)
 
 ! --- Update response matrices only, if parameter values changed or matrices not allocated
-    update_required = ( old_res     /= wall_resistivity       ) &
+    if (CARIDDI_mode .and. halo_freeb) then
+      update_required = ( old_res     /= wall_resistivity       ) &
+                 .or. ( old_tstep   /= tstep                  ) &
+                 .or. ( old_theta   /= theta                  ) &
+                 .or. ( old_zeta    /= zeta                   ) &
+                 .or. ( old_reswall .neqv. resistive_wall     ) &
+                 .or. ( .not. allocated(response_d_b_i)       ) &
+                 .or. ( .not. allocated(response_d_c_i)       ) &
+                 .or. ( .not. allocated(response_m_e_i)        ) &
+                 .or. ( .not. allocated(response_m_h)         ) &
+                 .or. ( .not. allocated(response_m_j_i)         )
+    else
+      update_required = ( old_res     /= wall_resistivity       ) &
                  .or. ( old_tstep   /= tstep                  ) &
                  .or. ( old_theta   /= theta                  ) &
                  .or. ( old_zeta    /= zeta                   ) &
                  .or. ( old_reswall .neqv. resistive_wall     ) &
                  .or. ( .not. allocated(response_d_b)         ) &
-                 .or. ( .not. allocated(response_d_b_i)       ) &
                  .or. ( .not. allocated(response_d_c)         ) &
-                 .or. ( .not. allocated(response_d_c_i)       ) &
                  .or. ( .not. allocated(response_m_e)         ) &
                  .or. ( .not. allocated(response_m_h)         ) &
                  .or. ( .not. allocated(response_m_j)         )
+
+    endif
+
 
     if ( update_required ) then
       ! --- Remember parameter values.
@@ -3188,19 +3214,30 @@ module vacuum_response
       old_reswall = resistive_wall
 
       ! --- Allocate matrices if required
-      if ( .not. allocated(response_d_b) ) allocate( response_d_b(n_wall_curr) )
-      if ( .not. allocated(response_d_b_i) ) allocate( response_d_b_i(n_wall_curr_i) )
-      if ( .not. allocated(response_d_c) ) allocate( response_d_c(n_wall_curr) )
-      if ( .not. allocated(response_d_c_i) ) allocate( response_d_c_i(n_wall_curr_i) )
-      if ( .not. allocated(response_m_h) ) allocate( response_m_h(n_dof_starwall, n_dof_starwall) )
-
-      if( .not. allocated (response_m_a%loc_mat) ) &
+      if (CARIDDI_mode .and. halo_freeb) then
+        if ( .not. allocated(response_d_b_i) ) allocate( response_d_b_i(n_wall_curr_i) )
+        if ( .not. allocated(response_d_c_i) ) allocate( response_d_c_i(n_wall_curr_i) )
+        if ( .not. allocated(response_m_h) ) allocate( response_m_h(n_dof_starwall, n_dof_starwall) )
+        if( .not. allocated (response_m_a_i%loc_mat) ) &
+            call  alloc_distr(my_id, response_m_a_i, (/n_wall_curr_i, n_dof_starwall/), .false.)
+        if( .not. allocated (response_m_d_i%loc_mat) ) &
+            call  alloc_distr(my_id, response_m_d_i, (/n_wall_curr_i, n_dof_starwall/), .false.)
+      else
+        if ( .not. allocated(response_d_b) ) allocate( response_d_b(n_wall_curr) )
+        if ( .not. allocated(response_d_c) ) allocate( response_d_c(n_wall_curr) )
+        if ( .not. allocated(response_m_h) ) allocate( response_m_h(n_dof_starwall, n_dof_starwall) )
+        if( .not. allocated (response_m_a%loc_mat) ) &
             call  alloc_distr(my_id, response_m_a, (/n_wall_curr, n_dof_starwall/), .false.)
-      if( .not. allocated (response_m_d%loc_mat) ) &
+        if( .not. allocated (response_m_d%loc_mat) ) &
             call  alloc_distr(my_id, response_m_d, (/n_wall_curr, n_dof_starwall/), .false.)
+      endif
 
 
-      ! --- Derived response matrices for time-evolution
+
+      ! ======================================================================================
+      ! ------------------ Derived response matrices for time-evolution ----------------------
+      ! ======================================================================================
+
       if ( resistive_wall) then
 
         ! ======================================= EDDY+HALO COUPLING =====================================
@@ -3213,8 +3250,36 @@ module vacuum_response
           response_d_b_i(:) = - tstep * wall_resistivity * sr%dii_yy / tmp_d_sii(:)
           response_d_c_i(:) = zeta / tmp_d_sii(:)
 
-          response_d_b(:)   = 0.d0
-          response_d_c(:)   = 0.d0
+          !response_d_b(:)   = 0.d0
+          !response_d_c(:)   = 0.d0
+
+          ! N.B. Change of sign compared to eddy-only coupl., the Ci_star in CARIDDI already contains "-"
+          do j = 1, size(response_m_a_i%loc_mat,2) 
+            response_m_a_i%loc_mat(:,j) = (1.d0+zeta) * sr%a_yie%loc_mat(:,j) / tmp_d_sii(:)
+          end do
+          ! N.B. Change of sign compared to eddy-only coupl., the Ci_star in CARIDDI already contains "-"
+          do j = 1, size(response_m_d_i%loc_mat,2)
+            response_m_d_i%loc_mat(:,j) = -zeta * sr%a_yie%loc_mat(:,j) / tmp_d_sii(:)
+          end do
+
+          ! --- m_e_i = a_ee - matmul(a_eyi, m_a)
+          call matrix_multiplication(my_id,sr%a_eyi,mat2=response_m_a_i, res_mat_not_distr=response_m_e_i)
+          do j = 1, size(sr%a_ee%loc_mat,1)
+            response_m_e_i(j+my_id*sr%a_ee%step,:) = response_m_e_i(j+my_id*sr%a_ee%step,:) + sr%a_ee%loc_mat(j,:)
+          end do
+          call MPI_AllREDUCE(MPI_IN_PLACE,response_m_e_i,size(response_m_e_i),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
+
+          response_m_h =0.0
+          response_m_h(sr%a_ee%ind_start:sr%a_ee%ind_end,:) = sr%a_ee%loc_mat(:,:)
+          call MPI_AllREDUCE(MPI_IN_PLACE,response_m_h,size(response_m_h),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
+
+          ! --- m_j_i =  matmul(a_eyi, m_d_i)
+          call matrix_multiplication(my_id,sr%a_eyi,mat2=response_m_d_i,res_mat_not_distr=response_m_j_i)
+          call MPI_AllREDUCE(MPI_IN_PLACE,response_m_j_i,size(response_m_j_i),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
+          call  dealloc_distr(response_m_a_i)
+          call  dealloc_distr(response_m_d_i)
+          
+          deallocate( tmp_d_sii)
 
         else
         ! ------------------------------- EDDY COUPLING ------------------------------------------------
@@ -3226,8 +3291,8 @@ module vacuum_response
           response_d_b(:) = - tstep * wall_resistivity * sr%d_yy(:) / tmp_d_s(:)
           response_d_c(:) = zeta / tmp_d_s(:)
           
-          response_d_b_i(:) = 0.d0
-          response_d_c_i(:) = 0.d0 
+          !response_d_b_i(:) = 0.d0
+          !response_d_c_i(:) = 0.d0 
 
           do j = 1, size(response_m_a%loc_mat,2) 
             response_m_a%loc_mat(:,j) = -(1.d0+zeta) * sr%a_ye%loc_mat(:,j) / tmp_d_s(:)
@@ -3260,7 +3325,7 @@ module vacuum_response
         endif
        ! ================================================================================================
 
-      else ! (Ideal wall)
+      else ! (Ideal wall) (NOT DONE YET FOR HALOS)
 
         response_m_a%loc_mat(:,:) = 0.d0
         response_d_b(:)   = 0.d0

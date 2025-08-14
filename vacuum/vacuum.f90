@@ -51,8 +51,10 @@ module vacuum
   real*8, allocatable  :: response_d_c(:)                !< \f$\hat{C}\f$ in the documentation
   real*8, allocatable  :: response_d_c_i(:)               
   real*8, allocatable  :: response_m_e(:,:)              !< \f$\hat{E}\f$ in the documentation
+  real*8, allocatable  :: response_m_e_i(:,:)            !< \f$\hat{E_i}\f$ in the documentation
   real*8, allocatable  :: response_m_h(:,:)              !< \f$\hat{H}\f$ in the documentation
   real*8, allocatable  :: response_m_j(:,:)              !< \f$\hat{J}\f$ in the documentation
+  real*8, allocatable  :: response_m_j_i(:,:)            !< \f$\hat{J_i}\f$ in the documentation
   real*8, allocatable  :: response_m_eq(:,:)             !< Response matrix for vacuum_equil
 
   !> @name Equilibrium coil contributions
