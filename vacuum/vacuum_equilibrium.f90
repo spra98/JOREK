@@ -226,9 +226,11 @@ module vacuum_equilibrium
       i_end_pf   = i_start_pf + sr%n_pol_coils -1
       if ( .not. allocated(wall_curr) )       allocate( wall_curr(n_wall_curr) ) 
       if ( .not. allocated(wall_curr_i) )     allocate( wall_curr_i(n_wall_curr_i) ) 
+      if ( .not. allocated(wall_curr_e) )     allocate( wall_curr_e(n_wall_curr_e) ) 
       if ( .not. allocated (potentials_real)) allocate(potentials_real(sr%ncoil))      
       wall_curr       = 0.d0
       wall_curr_i     = 0.d0
+      wall_curr_e     = 0.d0
       potentials_real = 0.d0
       potentials_real(i_start_pf:i_end_pf) =  I_coils(i_start_pf:i_end_pf) * mu_zero
 
@@ -237,6 +239,8 @@ module vacuum_equilibrium
       if (CARIDDI_mode .AND. halo_freeb) then
         do i = 1, n_wall_curr_i
           if ( (i>=sr%s_ww_ii_inv%ind_start) .and. (i<=sr%s_ww_ii_inv%ind_end) ) then
+            !write(*,*) 's_ww_ii_inv%step', sr%s_ww_ii_inv%step
+            !write(*,*) 'sr%ncoil , offset, i_start_pf, i_end_pf', sr%ncoil, offset, i_start_pf, i_end_pf
             wall_curr_i(i) = & 
             sum(sr%s_ww_ii_inv%loc_mat(i-my_id*sr%s_ww_ii_inv%step,offset:offset+sr%ncoil -1) *potentials_real(:))
           endif

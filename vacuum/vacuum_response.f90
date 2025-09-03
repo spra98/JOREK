@@ -767,7 +767,7 @@ module vacuum_response
 
     if (halo_freeb) then
       if (my_id == 0 .and. CARIDDI_mode) then ! use read_array_not_distr ?
-        call read_array_par(filehandle, 'FwtFw_inv', (/sr%n_electrode_w-1, sr%n_electrode_w-1/), disp, my_id, sr%fwtfw_inv, .false. ) 
+        call read_array_par(filehandle, 'FwtFw_inv', (/sr%n_electrode_w-1, sr%n_electrode_w-1/), disp, my_id, sr%fwtfw_inv, .true.)
         call read_array_not_distr(filehandle, 'ielsphi_w', (/sr%n_pts_real_w,3/), disp, float2d=sr%ielsphi_real_w)
         call read_array_not_distr(filehandle, 'ielsphi_J', (/sr%n_pts_real_J,3/), disp, float2d=sr%ielsphi_real_J)
         call read_array_not_distr(filehandle, 'Jmat_real_w', (/sr%n_electrode_w,sr%n_pts_real_w/), disp, float2d=sr%Jmat_real_w)
@@ -2754,9 +2754,10 @@ module vacuum_response
       theta = time_evol_theta
       zeta  = time_evol_zeta
 
-      if  (.not. allocated(tmp_d_sii)     ) allocate (tmp_d_s     (n_wall_curr_i))
-      if  (.not. allocated(inv_tmp_d_sii) ) allocate (inv_tmp_d_s (n_wall_curr_i))
-      tmp_d_sii(:) = 1.d0 + zeta +tstep*theta*wall_resistivity* sr%dii_yy(:)
+      if  (.not. allocated(tmp_d_sii)     ) allocate (tmp_d_sii     (n_wall_curr_i))
+      if  (.not. allocated(inv_tmp_d_sii) ) allocate (inv_tmp_d_sii (n_wall_curr_i))
+      tmp_d_sii(:) = 1.d0 + zeta + tstep*theta*wall_resistivity*sr%dii_yy(:)
+
       inv_tmp_d_sii(:) = 1.0d0 / tmp_d_sii(:)
 
       !> WARNING: Now we can compute the dwall_curr term for the current time-step
