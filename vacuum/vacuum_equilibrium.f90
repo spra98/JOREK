@@ -239,8 +239,6 @@ module vacuum_equilibrium
       if (CARIDDI_mode .AND. halo_freeb) then
         do i = 1, n_wall_curr_i
           if ( (i>=sr%s_ww_ii_inv%ind_start) .and. (i<=sr%s_ww_ii_inv%ind_end) ) then
-            !write(*,*) 's_ww_ii_inv%step', sr%s_ww_ii_inv%step
-            !write(*,*) 'sr%ncoil , offset, i_start_pf, i_end_pf', sr%ncoil, offset, i_start_pf, i_end_pf
             wall_curr_i(i) = & 
             sum(sr%s_ww_ii_inv%loc_mat(i-my_id*sr%s_ww_ii_inv%step,offset:offset+sr%ncoil -1) *potentials_real(:))
           endif

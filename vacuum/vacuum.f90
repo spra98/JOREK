@@ -710,44 +710,44 @@ module vacuum
       
       if ( resistive_wall .and. resistive_wall_rst ) then
         
-       ! if (halo_freeb .and. CARIDDI_mode) then
+        if (halo_freeb .and. CARIDDI_mode) then
           call HDF5_integer_reading(file_id,n_wall_curr_i,"n_wall_curr_i")
           call HDF5_integer_reading(file_id,n_wall_curr_e,"n_wall_curr_e")
-        !else
-       !   call HDF5_integer_reading(file_id,n_wall_curr,"n_wall_curr")
-       ! endif
+        else
+         call HDF5_integer_reading(file_id,n_wall_curr,"n_wall_curr")
+       endif
         
-        call HDF5_integer_reading(file_id,n_dof_starwall,"n_dof_starwall")
+       call HDF5_integer_reading(file_id,n_dof_starwall,"n_dof_starwall")
 
-        !if (halo_freeb .AND. CARIDDI_mode) then
+       if (halo_freeb .AND. CARIDDI_mode) then
 
-          if ( allocated(wall_curr_i) ) deallocate(wall_curr_i)
-          allocate( wall_curr_i(n_wall_curr_i) )
-          call HDF5_array1D_reading(file_id,wall_curr_i,"wall_curr_i")
+           if ( allocated(wall_curr_i) ) deallocate(wall_curr_i)
+           allocate( wall_curr_i(n_wall_curr_i) )
+           call HDF5_array1D_reading(file_id,wall_curr_i,"wall_curr_i")
           
-          if ( allocated(dwall_curr_i) ) deallocate(dwall_curr_i)
-          allocate( dwall_curr_i(n_wall_curr_i) )
-          call HDF5_array1D_reading(file_id,dwall_curr_i,"dwall_curr_i")
+           if ( allocated(dwall_curr_i) ) deallocate(dwall_curr_i)
+           allocate( dwall_curr_i(n_wall_curr_i) )
+           call HDF5_array1D_reading(file_id,dwall_curr_i,"dwall_curr_i")
 
-          if ( allocated(wall_curr_e) ) deallocate(wall_curr_e)
-          allocate( wall_curr_e(n_wall_curr_e) )
-          call HDF5_array1D_reading(file_id,wall_curr_e,"wall_curr_e")
+           if ( allocated(wall_curr_e) ) deallocate(wall_curr_e)
+           allocate( wall_curr_e(n_wall_curr_e) )
+           call HDF5_array1D_reading(file_id,wall_curr_e,"wall_curr_e")
           
-          ! if ( allocated(dwall_curr_e) ) deallocate(dwall_curr_e)
-          ! allocate( dwall_curr_e(n_wall_curr_e) )
-          ! call HDF5_array1D_reading(file_id,dwall_curr_e,"dwall_curr_e")
+           if ( allocated(dwall_curr_e) ) deallocate(dwall_curr_e)
+           allocate( dwall_curr_e(n_wall_curr_e) )
+           call HDF5_array1D_reading(file_id,dwall_curr_e,"dwall_curr_e")
 
-       ! else  
+       else  
 
-        !  if ( allocated(wall_curr) ) deallocate(wall_curr)
-       !   allocate( wall_curr(n_wall_curr) )
-         ! call HDF5_array1D_reading(file_id,wall_curr,"wall_curr")
-          
-         ! if ( allocated(dwall_curr) ) deallocate(dwall_curr)
-        !  allocate( dwall_curr(n_wall_curr) )
-        !  call HDF5_array1D_reading(file_id,dwall_curr,"dwall_curr")
+          if ( allocated(wall_curr) ) deallocate(wall_curr)
+          allocate( wall_curr(n_wall_curr) )
+          call HDF5_array1D_reading(file_id,wall_curr,"wall_curr")
+           
+          if ( allocated(dwall_curr) ) deallocate(dwall_curr)
+          allocate( dwall_curr(n_wall_curr) )
+          call HDF5_array1D_reading(file_id,dwall_curr,"dwall_curr")
 
-       ! endif
+       endif
         
         if ( allocated(old_dpsibnd_vec) ) deallocate(old_dpsibnd_vec)
         allocate( old_dpsibnd_vec(n_dof_starwall) )
@@ -1006,24 +1006,24 @@ module vacuum
           end if
         endif
 
-       ! if (halo_freeb .AND. CARIDDI_mode) then
+        if (halo_freeb .AND. CARIDDI_mode) then
           call HDF5_integer_saving(file_id,n_wall_curr_i,"n_wall_curr_i"//char(0))
           call HDF5_integer_saving(file_id,n_wall_curr_e,"n_wall_curr_e"//char(0))
-       ! else 
-       !   call HDF5_integer_saving(file_id,n_wall_curr,"n_wall_curr"//char(0))
-       ! endif
+        else 
+         call HDF5_integer_saving(file_id,n_wall_curr,"n_wall_curr"//char(0))
+        endif
 
         call HDF5_integer_saving(file_id,n_dof_starwall,"n_dof_starwall"//char(0))
 
-        !if (halo_freeb .AND. CARIDDI_mode) then    
+        if (halo_freeb .AND. CARIDDI_mode) then    
           call HDF5_array1D_saving(file_id,wall_curr_i,n_wall_curr_i,"wall_curr_i"//char(0))
           call HDF5_array1D_saving(file_id,dwall_curr_i,n_wall_curr_i,"dwall_curr_i"//char(0))
-          call HDF5_array1D_saving(file_id,wall_curr_e,n_wall_curr_i,"wall_curr_e"//char(0))
-         ! call HDF5_array1D_saving(file_id,dwall_curr_e,n_wall_curr_i,"dwall_curr_e"//char(0))
-       !else
-        !  call HDF5_array1D_saving(file_id,wall_curr,n_wall_curr,"wall_curr"//char(0))
-        !  call HDF5_array1D_saving(file_id,dwall_curr,n_wall_curr,"dwall_curr"//char(0))
-       ! endif
+          call HDF5_array1D_saving(file_id,wall_curr_e,n_wall_curr_e,"wall_curr_e"//char(0))
+          call HDF5_array1D_saving(file_id,dwall_curr_e,n_wall_curr_e,"dwall_curr_e"//char(0))
+        else
+          call HDF5_array1D_saving(file_id,wall_curr,n_wall_curr,"wall_curr"//char(0))
+          call HDF5_array1D_saving(file_id,dwall_curr,n_wall_curr,"dwall_curr"//char(0))
+        endif
 
         call HDF5_integer_saving(file_id,sr%n_diag_coils,"n_diag_coil"//char(0))
         call HDF5_integer_saving(file_id,sr%n_pol_coils,"n_pf_coil"//char(0))
@@ -1118,7 +1118,12 @@ module vacuum
 
     if ( resistive_wall ) then
       
-      call MPI_BCAST(n_wall_curr,1,MPI_INTEGER,0,MPI_COMM_WORLD,ierr)
+      if (halo_freeb .and. CARIDDI_mode) then
+        call MPI_BCAST(n_wall_curr_i,1,MPI_INTEGER,0,MPI_COMM_WORLD,ierr)
+        call MPI_BCAST(n_wall_curr_e,1,MPI_INTEGER,0,MPI_COMM_WORLD,ierr)
+      else
+        call MPI_BCAST(n_wall_curr,1,MPI_INTEGER,0,MPI_COMM_WORLD,ierr)
+      endif
       call MPI_BCAST(n_coils,1,MPI_INTEGER,0,MPI_COMM_WORLD,ierr)
       
       if ( n_wall_curr == 0 ) return

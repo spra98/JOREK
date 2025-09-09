@@ -80,8 +80,11 @@ module vacuum_response
     if (my_id == 0) call export_boundary(node_list, bnd_elm_list, bnd_node_list)
     
     if ( vacuum_debug  ) call log_starwall_response(my_id, sr) 
+    write(*,*) 'Calling read_SW_response'
     call read_starwall_response(my_id, sr,'starwall-response.dat',bnd_elm_list%n_bnd_elements)
+    write(*,*) 'Calling broadcast SW response'
     call broadcast_starwall_response(my_id, sr)
+    write(*,*) 'Finished broadcasting SW response'
     if( sr%ncoil .gt. 0 ) call distribute_coil_names
 
     ! --- Set the "wall resistivity" to be used inside JOREK (actually it is the normalized thin wall resistivity)
@@ -617,7 +620,7 @@ module vacuum_response
         ! Read null space dimension for wall
         sr%n_nw   =  read_intparam_parallel(filehandle, 'n_nw'   , disp)
       else
-        sr%n_w = 0
+        sr%n_nw = 0
       endif
       sr%ntri_w = read_intparam_parallel(filehandle, 'ntri_w', disp)
 
@@ -721,11 +724,12 @@ module vacuum_response
     if(my_id==0) call memory_prediction(sr%n_w, sr%nd_bez, ntasks)
 
     call MPI_BCAST(sr%n_w,    1, MPI_INTEGER, 0, MPI_COMM_WORLD, err)
-    ! Dimension of wall dofs' null space
-    if (CARIDDI_mode .and. halo_freeb) call MPI_BCAST(sr%n_nw,   1, MPI_INTEGER, 0, MPI_COMM_WORLD, err)
+    call MPI_BCAST(sr%n_nw,   1, MPI_INTEGER, 0, MPI_COMM_WORLD, err)
     call MPI_BCAST(sr%nd_bez, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, err)
-    if (CARIDDI_mode .and. halo_freeb) call MPI_BCAST(sr%n_pts_real_w, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, err)  
-    if (CARIDDI_mode .and. halo_freeb) call MPI_BCAST(sr%n_pts_real_J, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, err)
+    call MPI_BCAST(sr%n_pts_real_w, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, err)  
+    call MPI_BCAST(sr%n_pts_real_J, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, err)
+    call MPI_BCAST(sr%n_electrode_w, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, err)  
+    call MPI_BCAST(sr%n_electrode_J, 1, MPI_INTEGER, 0, MPI_COMM_WORLD, err)
     call MPI_bcast(sr%ind_start_coils,     1, MPI_INTEGER,  0, MPI_COMM_WORLD, err)
     call MPI_bcast(sr%ncoil,                   1, MPI_INTEGER,  0, MPI_COMM_WORLD, err)
 
@@ -764,10 +768,9 @@ module vacuum_response
       endif
       sr%ind_start_coils = 1
     end if
-
     if (halo_freeb) then
+      if (CARIDDI_mode)  call read_array_par(filehandle, 'FwtFw_inv', (/sr%n_electrode_w-1, sr%n_electrode_w-1/), disp, my_id, sr%fwtfw_inv, .true.)
       if (my_id == 0 .and. CARIDDI_mode) then ! use read_array_not_distr ?
-        call read_array_par(filehandle, 'FwtFw_inv', (/sr%n_electrode_w-1, sr%n_electrode_w-1/), disp, my_id, sr%fwtfw_inv, .true.)
         call read_array_not_distr(filehandle, 'ielsphi_w', (/sr%n_pts_real_w,3/), disp, float2d=sr%ielsphi_real_w)
         call read_array_not_distr(filehandle, 'ielsphi_J', (/sr%n_pts_real_J,3/), disp, float2d=sr%ielsphi_real_J)
         call read_array_not_distr(filehandle, 'Jmat_real_w', (/sr%n_electrode_w,sr%n_pts_real_w/), disp, float2d=sr%Jmat_real_w)
@@ -1183,11 +1186,15 @@ module vacuum_response
     call MPI_bcast(sr%file_version,            1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
     call MPI_bcast(sr%n_bnd,                   1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
     call MPI_bcast(sr%nd_bez,                  1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
+    ! if (CARIDDI_mode .and. halo_freeb) then (We broadcast anyway?)
     call MPI_bcast(sr%n_pts_real_w,            1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
     call MPI_bcast(sr%n_pts_real_J,            1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
+    call MPI_bcast(sr%n_electrode_w,            1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
+    call MPI_bcast(sr%n_electrode_J,            1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
+    !endif
     call MPI_bcast(sr%npot_w,                  1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
     call MPI_bcast(sr%n_w,                     1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
-    if (CARIDDI_mode) call MPI_bcast(sr%n_nw,  1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
+    call MPI_bcast(sr%n_nw,                    1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
     call MPI_bcast(sr%ntri_w,                  1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
     call MPI_bcast(sr%n_tor,                   1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
     call MPI_bcast(sr%n_tor0,                  1, MPI_INTEGER,  0, MPI_COMM_WORLD, ierr)
@@ -1220,9 +1227,17 @@ module vacuum_response
     if ( my_id /= 0 ) then
       if (allocated(sr%i_tor)   ) deallocate(sr%i_tor);    allocate(sr%i_tor(sr%n_tor))
       if (allocated(sr%d_yy)    ) deallocate(sr%d_yy);     allocate(sr%d_yy(sr%n_w))
-      if (CARIDDI_mode) then
+      if (CARIDDI_mode .and. halo_freeb) then
         if (ALLOCATED(sr%dii_yy)) deallocate(sr%dii_yy)
         allocate(sr%dii_yy(sr%n_nw))
+      endif
+      if (CARIDDI_mode .and. halo_freeb) then
+        if (allocated(sr%ielsphi_real_w)) deallocate(sr%ielsphi_real_w); allocate(sr%ielsphi_real_w(sr%n_pts_real_w,3))
+        if (allocated(sr%ielsphi_real_J)) deallocate(sr%ielsphi_real_J); allocate(sr%ielsphi_real_J(sr%n_pts_real_J,3))
+        if (allocated(sr%Jmat_real_w)) deallocate(sr%Jmat_real_w); allocate(sr%Jmat_real_w(sr%n_electrode_w,sr%n_pts_real_w))
+        if (allocated(sr%Jmat_real_J)) deallocate(sr%Jmat_real_J); allocate(sr%Jmat_real_J(sr%n_electrode_J,sr%n_pts_real_J))
+        if (allocated(sr%Jmat_w)) deallocate(sr%Jmat_w); allocate(sr%Jmat_w(sr%n_electrode_w,sr%nd_bez))
+        if (allocated(sr%Jmat_J)) deallocate(sr%Jmat_J); allocate(sr%Jmat_J(sr%n_electrode_J,sr%nd_bez))
       endif
       if (.not. CARIDDI_mode) then
         if (allocated(sr%xyzpot_w)) deallocate(sr%xyzpot_w); allocate(sr%xyzpot_w(sr%npot_w,3))
@@ -1256,7 +1271,16 @@ module vacuum_response
     ! --- Broadcast matrices.
     call MPI_bcast(sr%i_tor,    sr%n_tor,                MPI_INTEGER,          0, MPI_COMM_WORLD, ierr)
     call MPI_bcast(sr%d_yy,     sr%n_w,                  MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
-    if (CARIDDI_mode) call MPI_bcast(sr%dii_yy, sr%n_nw,  MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
+    if (CARIDDI_mode .and. halo_freeb) then
+      call MPI_bcast(sr%dii_yy, sr%n_nw,  MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
+      call MPI_bcast(sr%ielsphi_real_w, sr%n_pts_real_w*3,  MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
+      call MPI_bcast(sr%ielsphi_real_J, sr%n_pts_real_J*3,  MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
+      call MPI_bcast(sr%Jmat_real_w, sr%n_electrode_w*sr%n_pts_real_w,  MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
+      call MPI_bcast(sr%Jmat_real_J, sr%n_electrode_J*sr%n_pts_real_J,  MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
+      call MPI_bcast(sr%Jmat_w, sr%n_electrode_w*sr%nd_bez,  MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
+      call MPI_bcast(sr%Jmat_J, sr%n_electrode_J*sr%nd_bez,  MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
+    endif
+
     if (.not. CARIDDI_mode) then
       call MPI_bcast(sr%xyzpot_w, sr%npot_w*3,             MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
       call MPI_bcast(sr%jpot_w,   sr%ntri_w*3,             MPI_INTEGER,          0, MPI_COMM_WORLD, ierr)
@@ -2414,7 +2438,7 @@ module vacuum_response
   !> Initialize the currents in the resistive wall and the external coil currents.
   subroutine init_wall_currents(my_id, resistive_wall)
     
-    use nodes_elements, only: bnd_node_list, node_list
+    !use nodes_elements, only: bnd_node_list, node_list
     use phys_module, only: index_now, index_start, nstep
     use mpi_mod
     
@@ -2431,7 +2455,7 @@ module vacuum_response
     real*8, allocatable :: tmp_coil_curr(:)
     integer             :: k, k2, ierr
     
-    call det_psibnd_vec(bnd_node_list, node_list, psibnd_vec, dpsibnd_vec)
+    !call det_psibnd_vec(bnd_node_list, node_list, psibnd_vec, dpsibnd_vec)
     
     if ( resistive_wall ) then
       
@@ -2510,7 +2534,7 @@ module vacuum_response
     old_dpsibnd_vec(:) = 0.d0
 
     if (.not. CARIDDI_mode .and. .not. vacuum_min) call write_wall_vtk(0, resistive_wall, my_id)
-    deallocate( psibnd_vec, dpsibnd_vec )
+    !deallocate( psibnd_vec, dpsibnd_vec )
     
     ! wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww
     ! ====================================================================================================
