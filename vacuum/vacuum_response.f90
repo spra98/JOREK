@@ -80,11 +80,11 @@ module vacuum_response
     if (my_id == 0) call export_boundary(node_list, bnd_elm_list, bnd_node_list)
     
     if ( vacuum_debug  ) call log_starwall_response(my_id, sr) 
-    write(*,*) 'Calling read_SW_response'
+    if (my_id == 0) write(*,*) 'Calling read_SW_response'
     call read_starwall_response(my_id, sr,'starwall-response.dat',bnd_elm_list%n_bnd_elements)
-    write(*,*) 'Calling broadcast SW response'
+    if (my_id == 0) write(*,*) 'Calling broadcast SW response'
     call broadcast_starwall_response(my_id, sr)
-    write(*,*) 'Finished broadcasting SW response'
+    if (my_id == 0) write(*,*) 'Finished broadcasting SW response'
     if( sr%ncoil .gt. 0 ) call distribute_coil_names
 
     ! --- Set the "wall resistivity" to be used inside JOREK (actually it is the normalized thin wall resistivity)
@@ -265,7 +265,7 @@ module vacuum_response
  
   
   !> Read an array from the STARWALL respone file (MPI I/O).
-  subroutine read_array_not_distr(filehandle, array_name, dim, disp, int1d, int2d, float1d, float2d, char1d)
+  subroutine read_array_not_distr(filehandle, array_name, dim, disp, int1d, int2d, float1d, float2d, char1d, deb)
 
     use mpi_mod
     implicit none
@@ -279,6 +279,7 @@ module vacuum_response
     integer, allocatable, optional, intent(inout)   :: int2d(:,:)
     real*8,  allocatable, optional, intent(inout)   :: float1d(:)
     real*8,  allocatable, optional, intent(inout)   :: float2d(:,:)
+    logical,                        intent(in)      :: deb
     character(len=*), allocatable, optional, intent(inout)   :: char1d(:)
 
     ! --- Local variables
@@ -298,15 +299,35 @@ module vacuum_response
     end if
 
     call MPI_FILE_READ(filehandle,  marker,   int(sizeof(marker),4),    MPI_CHARACTER,status,ierr)
+    if (deb) write(*,*) 'ierr after marker', ierr
     call MPI_FILE_READ(filehandle,  name,     int(sizeof(name),4),      MPI_CHARACTER,status,ierr)
+    if (deb) write(*,*) 'ierr after name', ierr
     call MPI_FILE_READ(filehandle,  nd,       1,                        MPI_INTEGER  ,status,ierr)
+    if (deb) write(*,*) 'ierr after nd', ierr
     call MPI_FILE_READ(filehandle,  datatype, int(sizeof(datatype),4),  MPI_CHARACTER,status,ierr)
+    if (deb) write(*,*) 'ierr after datatype', ierr
     call MPI_FILE_READ(filehandle,  d,        2,                        MPI_INTEGER  ,status,ierr)
+    if (deb) write(*,*) 'ierr after d', ierr
     disp = disp + sizeof(marker) + sizeof(name) + sizeof(nd) + sizeof(datatype) + sizeof(d) 
 
     marker   = adjustl(marker)
     name     = adjustl(name)
     datatype = adjustl(datatype)
+
+    if (deb) then 
+      
+      write(*,*) '( ierr /= 0 )', (ierr /= 0 )
+      write(*,*) '( trim(marker) /= #@array )', ( trim(marker) /= '#@array' )
+      write(*,*) 'marker is', trim(marker) 
+      write(*,*) '( trim(name) /= trim(array_name) )' , ( trim(name) /= trim(array_name) )
+      write(*,*) 'name is', trim(name) 
+      write(*,*) '( dim(1) /= d(1) )', ( dim(1) /= d(1) )
+      write(*,*) 'd(1) is', d(1)
+      write(*,*) '( dim(2) /= d(2) )', ( dim(2) /= d(2) )
+      write(*,*) 'd(2) is', d(2)
+      write(*,*) '( trim(datatype) /= trim(requested_type) )', ( trim(datatype) /= trim(requested_type) )
+      write(*,*) 'datatype is', trim(datatype)
+    endif
 
     error = ( ierr /= 0 ) .or. ( trim(marker) /= '#@array' ) .or. ( trim(name) /= trim(array_name) ) &
       .or. ( dim(1) /= d(1) ) .or. ( dim(2) /= d(2) ) .or. ( trim(datatype) /= trim(requested_type) )
@@ -360,7 +381,7 @@ module vacuum_response
   
   
   !> Read an array from the STARWALL respone file
-  subroutine read_array_par(filehandle, array_name, dim, disp, my_id, float2d, row_wise, loc_start, loc_len, loc_row)
+  subroutine read_array_par(filehandle, array_name, dim, disp, my_id, float2d, row_wise, loc_start, loc_len, loc_row, deb)
 
     use mpi_mod
     implicit none
@@ -376,6 +397,7 @@ module vacuum_response
     integer, optional,              intent(in)      :: loc_start    ! start index of partial read in direction loc_row
     integer, optional,              intent(in)      :: loc_len      ! length partial read in direction loc_row
     logical, optional,              intent(in)      :: loc_row      ! direction of partial read (has to be opposite of row_wise)
+    logical, optional,              intent(in)      :: deb
 
 
     ! --- Local variables
@@ -421,6 +443,21 @@ module vacuum_response
       marker   = adjustl(marker)
       name     = adjustl(name)
       datatype = adjustl(datatype)
+
+      ! if (deb) then 
+        
+      !   write(*,*) '( ierr /= 0 )', (ierr /= 0 )
+      !   write(*,*) '( trim(marker) /= #@array )', ( trim(marker) /= '#@array' )
+      !   write(*,*) 'marker is', trim(marker) 
+      !   write(*,*) '( trim(name) /= trim(array_name) )' , ( trim(name) /= trim(array_name) )
+      !   write(*,*) 'name is', trim(name) 
+      !   write(*,*) '( dim(1) /= d(1) )', ( dim(1) /= d(1) )
+      !   write(*,*) 'd(1) is', d(1)
+      !   write(*,*) '( dim(2) /= d(2) )', ( dim(2) /= d(2) )
+      !   write(*,*) 'd(2) is', d(2)
+      !   write(*,*) '( trim(datatype) /= trim(requested_type) )', ( trim(datatype) /= 'float' )
+      !   write(*,*) 'datatype is', trim(datatype)
+      ! endif
 
       error = ( ierr /= 0 ) .or. ( trim(marker) /= '#@array' ) .or. (trim(name) /= trim(array_name) ) &
         .or. ( dim(1) /= d(1) ) .or. ( dim(2) /= d(2) ) .or. (trim(datatype) /= 'float' )
@@ -631,18 +668,18 @@ module vacuum_response
         sr%mn_w     = read_intparam_parallel(filehandle, 'mn_w',     disp)
         sr%max_mn_w = read_intparam_parallel(filehandle, 'MAX_MN_W', disp)
 
-        call read_array_not_distr(filehandle, 'm_w',         (/sr%max_mn_w,0/),  disp,  int1d=sr%m_w)
-        call read_array_not_distr(filehandle, 'n_w_fourier', (/sr%max_mn_w,0/),  disp,  int1d=sr%n_w_fourier)
-        call read_array_not_distr(filehandle, 'rc_w',        (/sr%max_mn_w,0/),  disp,  float1d=sr%rc_w)
-        call read_array_not_distr(filehandle, 'rs_w',        (/sr%max_mn_w,0/),  disp,  float1d=sr%rs_w)
-        call read_array_not_distr(filehandle, 'zc_w',        (/sr%max_mn_w,0/),  disp,  float1d=sr%zc_w)
-        call read_array_not_distr(filehandle, 'zs_w',        (/sr%max_mn_w,0/),  disp,  float1d=sr%zs_w)
+        call read_array_not_distr(filehandle, 'm_w',         (/sr%max_mn_w,0/),  disp,  int1d=sr%m_w, deb=.false. )
+        call read_array_not_distr(filehandle, 'n_w_fourier', (/sr%max_mn_w,0/),  disp,  int1d=sr%n_w_fourier, deb=.false.)
+        call read_array_not_distr(filehandle, 'rc_w',        (/sr%max_mn_w,0/),  disp,  float1d=sr%rc_w, deb=.false.)
+        call read_array_not_distr(filehandle, 'rs_w',        (/sr%max_mn_w,0/),  disp,  float1d=sr%rs_w, deb=.false.)
+        call read_array_not_distr(filehandle, 'zc_w',        (/sr%max_mn_w,0/),  disp,  float1d=sr%zc_w, deb=.false.)
+        call read_array_not_distr(filehandle, 'zs_w',        (/sr%max_mn_w,0/),  disp,  float1d=sr%zs_w, deb=.false.)
       endif
 
       sr%n_tor  = read_intparam_parallel(filehandle, 'n_tor' , disp)
       sr%n_tor0 = sr%n_tor
 
-      call read_array_not_distr(filehandle, 'i_tor', (/sr%n_tor,0/), disp, int1d=sr%i_tor)
+      call read_array_not_distr(filehandle, 'i_tor', (/sr%n_tor,0/), disp, int1d=sr%i_tor, deb=.false.)
 
       if ( sr%file_version >= 3) then
          if (.not. CARIDDI_mode)   sr%ntri_c                 = read_intparam_parallel(filehandle, 'ntri_c',          disp)
@@ -671,15 +708,15 @@ module vacuum_response
         sr%ind_start_diag_coils    = read_intparam_parallel(filehandle, 'ind_start_diag_coils',    disp)
 
         if ( sr%ncoil > 0 .and. .not. CARIDDI_mode) then
-          call read_array_not_distr(filehandle, 'jtri_c',        (/sr%ncoil,0/),  disp,  int1d=sr%jtri_c)
-          call read_array_not_distr(filehandle, 'x_coil',        (/sr%ntri_c,3/), disp,  float2d=sr%x_coil)
-          call read_array_not_distr(filehandle, 'y_coil',        (/sr%ntri_c,3/), disp,  float2d=sr%y_coil)
-          call read_array_not_distr(filehandle, 'z_coil',        (/sr%ntri_c,3/), disp,  float2d=sr%z_coil)
-          call read_array_not_distr(filehandle, 'phi_coil',      (/sr%ntri_c,3/), disp,  float2d=sr%phi_coil)
-          call read_array_not_distr(filehandle, 'eta_thin_coil', (/sr%ntri_c,0/), disp,  float1d=sr%eta_thin_coil)
-          call read_array_not_distr(filehandle, 'coil_resist',   (/sr%ncoil,0/),  disp,  float1d=sr%coil_resist)
+          call read_array_not_distr(filehandle, 'jtri_c',        (/sr%ncoil,0/),  disp,  int1d=sr%jtri_c, deb=.false.)
+          call read_array_not_distr(filehandle, 'x_coil',        (/sr%ntri_c,3/), disp,  float2d=sr%x_coil, deb=.false.)
+          call read_array_not_distr(filehandle, 'y_coil',        (/sr%ntri_c,3/), disp,  float2d=sr%y_coil, deb=.false.)
+          call read_array_not_distr(filehandle, 'z_coil',        (/sr%ntri_c,3/), disp,  float2d=sr%z_coil, deb=.false.)
+          call read_array_not_distr(filehandle, 'phi_coil',      (/sr%ntri_c,3/), disp,  float2d=sr%phi_coil, deb=.false.)
+          call read_array_not_distr(filehandle, 'eta_thin_coil', (/sr%ntri_c,0/), disp,  float1d=sr%eta_thin_coil, deb=.false.)
+          call read_array_not_distr(filehandle, 'coil_resist',   (/sr%ncoil,0/),  disp,  float1d=sr%coil_resist, deb=.false.)
           if (sr%file_version > 3)  then
-            call read_array_not_distr(filehandle, 'coil_name',     (/sr%ncoil,0/),  disp,  char1d=sr%coil_name)
+            call read_array_not_distr(filehandle, 'coil_name',     (/sr%ncoil,0/),  disp,  char1d=sr%coil_name, deb=.false.)
            endif
         end if
         
@@ -708,16 +745,16 @@ module vacuum_response
       ! --- eta_thin_w is only part of the STARWALL response file since file_version 2
       if ( sr%file_version >= 2 ) then
         allocate(tmp(1))
-        call read_array_not_distr(filehandle, 'eta_thin_w', (/1,0/), disp, float1d=tmp)
+        call read_array_not_distr(filehandle, 'eta_thin_w', (/1,0/), disp, float1d=tmp, deb=.false.)
         sr%eta_thin_w = tmp(1)
         deallocate(tmp)
       else
         sr%eta_thin_w = 0.
       end if
 
-      call read_array_not_distr(filehandle, 'yy', (/sr%n_w,0/), disp, float1d=sr%d_yy)
+      call read_array_not_distr(filehandle, 'yy', (/sr%n_w,0/), disp, float1d=sr%d_yy, deb=.false.)
       if (CARIDDI_mode .and. halo_freeb) then
-        call read_array_not_distr(filehandle, 'yy_ii', (/sr%n_nw,0 /), disp, float1d=sr%dii_yy   )
+        call read_array_not_distr(filehandle, 'yy_ii', (/sr%n_nw,0 /), disp, float1d=sr%dii_yy , deb=.false.  )
       endif
     end if
 
@@ -755,7 +792,7 @@ module vacuum_response
       if (.not. CARIDDI_mode) call read_array_par    (filehandle, 's_ww',     (/sr%n_w,sr%n_w/),       disp, my_id,  sr%s_ww,     .false.)
       call read_array_par    (filehandle, 's_ww_inv', (/sr%n_w,sr%n_w/),       disp, my_id,  sr%s_ww_inv, .true.)
       if (halo_freeb) then
-        if (CARIDDI_mode) call read_array_par(filehandle, 's_ww_ii_inv', (/sr%n_nw,sr%n_nw/),       disp, my_id,  sr%s_ww_ii_inv, .true.)
+        if (CARIDDI_mode) call read_array_par(filehandle, 's_ww_ii_inv', (/sr%n_nw,sr%n_w/),       disp, my_id,  sr%s_ww_ii_inv, .true., deb=.true.)
       endif
     else
       if (.not. CARIDDI_mode) call read_array_par    (filehandle, 's_ww',     (/sr%n_w,sr%n_w/),       disp, my_id,  sr%s_ww,     .false. , &
@@ -763,7 +800,7 @@ module vacuum_response
       call read_array_par    (filehandle, 's_ww_inv', (/sr%n_w,sr%n_w/),       disp, my_id,  sr%s_ww_inv, .true., &
           loc_start=sr%ind_start_coils, loc_len=sr%ncoil, loc_row=.false. )
       if (halo_freeb) then
-        if (CARIDDI_mode)  call read_array_par    (filehandle, 's_ww_ii_inv', (/sr%n_nw,sr%n_nw/), disp, my_id,  sr%s_ww_ii_inv, .true., &
+        if (CARIDDI_mode)  call read_array_par    (filehandle, 's_ww_ii_inv', (/sr%n_nw,sr%n_w/), disp, my_id,  sr%s_ww_ii_inv, .true., &
           loc_start=sr%ind_start_coils, loc_len=sr%ncoil, loc_row=.false. )
       endif
       sr%ind_start_coils = 1
@@ -771,21 +808,23 @@ module vacuum_response
     if (halo_freeb) then
       if (CARIDDI_mode)  call read_array_par(filehandle, 'FwtFw_inv', (/sr%n_electrode_w-1, sr%n_electrode_w-1/), disp, my_id, sr%fwtfw_inv, .true.)
       if (my_id == 0 .and. CARIDDI_mode) then ! use read_array_not_distr ?
-        call read_array_not_distr(filehandle, 'ielsphi_w', (/sr%n_pts_real_w,3/), disp, float2d=sr%ielsphi_real_w)
-        call read_array_not_distr(filehandle, 'ielsphi_J', (/sr%n_pts_real_J,3/), disp, float2d=sr%ielsphi_real_J)
-        call read_array_not_distr(filehandle, 'Jmat_real_w', (/sr%n_electrode_w,sr%n_pts_real_w/), disp, float2d=sr%Jmat_real_w)
-        call read_array_not_distr(filehandle, 'Jmat_real_J', (/sr%n_electrode_J,sr%n_pts_real_J/), disp, float2d=sr%Jmat_real_J)
-        call read_array_not_distr(filehandle, 'Jmat_w', (/sr%n_electrode_w,sr%nd_bez /), disp, float2d=sr%Jmat_w)
-        call read_array_not_distr(filehandle, 'Jmat_J', (/sr%n_electrode_J,sr%nd_bez /), disp, float2d=sr%Jmat_J)
+        call read_array_not_distr(filehandle, 'ielsphi_w', (/sr%n_pts_real_w,3/), disp, float2d=sr%ielsphi_real_w, deb=.false.)
+        call read_array_not_distr(filehandle, 'ielsphi_J', (/sr%n_pts_real_J,3/), disp, float2d=sr%ielsphi_real_J, deb=.false.)
+        ! write(*,*) 'Reading Jmat_real_w'
+        ! call read_array_not_distr(filehandle, 'Jmat_real_w', (/sr%n_electrode_w,sr%n_pts_real_w/), disp, float2d=sr%Jmat_real_w, deb=.true.)
+        ! write(*,*) 'Reading Jmat_real_J'
+        ! call read_array_not_distr(filehandle, 'Jmat_real_J', (/sr%n_electrode_J,sr%n_pts_real_J/), disp, float2d=sr%Jmat_real_J, deb=.true.)
+        call read_array_not_distr(filehandle, 'Jmat_w', (/sr%n_electrode_w,sr%nd_bez /), disp, float2d=sr%Jmat_w, deb=.false.)
+        call read_array_not_distr(filehandle, 'Jmat_J', (/sr%n_electrode_J,sr%nd_bez /), disp, float2d=sr%Jmat_J, deb=.false.)
 
       end if   
     endif
 
     if(my_id == 0 .and. .not. CARIDDI_mode) then
-     call read_array_not_distr(filehandle, 'xyzpot_w', (/sr%npot_w,3/), disp, float2d=sr%xyzpot_w)
-     call read_array_not_distr(filehandle, 'jpot_w',   (/sr%ntri_w,3/), disp, int2d=sr%jpot_w)
+     call read_array_not_distr(filehandle, 'xyzpot_w', (/sr%npot_w,3/), disp, float2d=sr%xyzpot_w, deb=.false.)
+     call read_array_not_distr(filehandle, 'jpot_w',   (/sr%ntri_w,3/), disp, int2d=sr%jpot_w, deb=.false.)
      if ( sr%file_version >= 5 ) then
-       call read_array_not_distr(filehandle, 'phi0_w',   (/sr%ntri_w,3/), disp, float2d=sr%phi0_w)
+       call read_array_not_distr(filehandle, 'phi0_w',   (/sr%ntri_w,3/), disp, float2d=sr%phi0_w, deb=.false.)
      endif
    end if
 
@@ -796,15 +835,23 @@ module vacuum_response
     ! --- Import normalization
     sr%a_ee%loc_mat(:,:) = sr%a_ee%loc_mat(:,:) * 2.d0*PI
     sr%a_ye%loc_mat(:,:) = sr%a_ye%loc_mat(:,:) * 2.d0*PI
-    sr%a_yie%loc_mat(:,:)= sr%a_yie%loc_mat(:,:)* 2.d0*PI
+    ! Change of sign (check documentation!) (IS THIS DONE ON ALL PROCESSES?)
+    sr%a_yie%loc_mat(:,:)= -sr%a_yie%loc_mat(:,:)* 2.d0*PI
 
     if ( vacuum_debug .and. (my_id==0) ) write(*,*) 'Applied import normalization.'
 
     ! --- Compute ideal-wall and no-wall response matrices.
     if (.not. resistive_wall) then
-      call matrix_multiplication(my_id,sr%a_ey,mat2=sr%a_ye, res_mat=sr%a_id )
-      sr%a_id%loc_mat(:,:) = sr%a_ee%loc_mat(:,:) - sr%a_id%loc_mat(:,:)
-    end if
+      ! IF HALO+EDDY COUPLING
+      if (halo_freeb .and. CARIDDI_mode) then
+        call matrix_multiplication(my_id, sr%a_eyi, mat2=sr%a_yie, res_mat=sr%a_id)
+        sr%a_id%loc_mat(:,:) = sr%a_ee%loc_mat(:,:) - sr%a_id%loc_mat(:,:)
+      else
+      ! IF ONLY EDDY COUPLING
+        call matrix_multiplication(my_id,sr%a_ey,mat2=sr%a_ye, res_mat=sr%a_id )
+        sr%a_id%loc_mat(:,:) = sr%a_ee%loc_mat(:,:) - sr%a_id%loc_mat(:,:)
+      end if
+    endif
     ! --- Transform STARWALL harmonics to account for periodicity
     if ( my_id==0 ) then
       j = 0
@@ -1275,8 +1322,8 @@ module vacuum_response
       call MPI_bcast(sr%dii_yy, sr%n_nw,  MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
       call MPI_bcast(sr%ielsphi_real_w, sr%n_pts_real_w*3,  MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
       call MPI_bcast(sr%ielsphi_real_J, sr%n_pts_real_J*3,  MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
-      call MPI_bcast(sr%Jmat_real_w, sr%n_electrode_w*sr%n_pts_real_w,  MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
-      call MPI_bcast(sr%Jmat_real_J, sr%n_electrode_J*sr%n_pts_real_J,  MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
+      !call MPI_bcast(sr%Jmat_real_w, sr%n_electrode_w*sr%n_pts_real_w,  MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
+      !call MPI_bcast(sr%Jmat_real_J, sr%n_electrode_J*sr%n_pts_real_J,  MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
       call MPI_bcast(sr%Jmat_w, sr%n_electrode_w*sr%nd_bez,  MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
       call MPI_bcast(sr%Jmat_J, sr%n_electrode_J*sr%nd_bez,  MPI_DOUBLE_PRECISION, 0, MPI_COMM_WORLD, ierr)
     endif
@@ -2100,7 +2147,7 @@ module vacuum_response
         if (.not. allocated(diag_e) ) allocate(diag_e(n_wall_curr_e))
         diag_e(:) = 1.d0
         call extended_matrix_vector(my_id, 1.d0, sr%a_eye, diag_e, &
-               wall_curr_e(:), .true., rhs_contrib_arr, .false.)
+              wall_curr_e(:), .true., rhs_contrib_arr, .false.)
         !> corresponds to matrix Qel_eq
         if (.not. allocated(diag_el_eq) ) allocate(diag_el_eq(sr%n_electrode_J-1))
         diag_el_eq(:) = 1.d0
@@ -2476,7 +2523,7 @@ module vacuum_response
           write(*,*) 'Allocating dwall_curr_i with', n_wall_curr_i
           allocate( dwall_curr_i(n_wall_curr_i) )
           do k = 1, n_wall_curr_i
-            dwall_curr_i(k) = 0.d0!- sum( sr%a_ye(k,:) * dpsibnd_vec(:) )
+            dwall_curr_i(k) = 0.d0!- sum( sr%a_yie(k,:) * dpsibnd_vec(:) )
           end do
         end if
         if ( (allocated(wall_curr_e)) .and. (.not. wall_curr_initialized) ) &
@@ -2495,7 +2542,7 @@ module vacuum_response
           write(*,*) 'Allocating dwall_curr_e with', n_wall_curr_e
           allocate( dwall_curr_e(n_wall_curr_e) )
           do k = 1, n_wall_curr_e
-            dwall_curr_e(k) = 0.d0!- sum( sr%a_ye(k,:) * dpsibnd_vec(:) )
+            dwall_curr_e(k) = 0.d0
           end do
         end if
 
@@ -2538,7 +2585,7 @@ module vacuum_response
     
     ! wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww
     ! ====================================================================================================
-    ! ============ HALO NOT IMPLEMENTED HERE SINCE THIS IS NOT FOR CARIDDI YET!!!!!! =====================  
+    ! ============ HALO NOT IMPLEMENTED HERE SINCE THIS IS NOT FOR CARIDDI !!!!!! =====================  
     ! ====================================================================================================
     ! wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww
 
@@ -2766,7 +2813,7 @@ module vacuum_response
 
       !> WARNING: The following computation of dwall_curr_2 contains the term
       !!          dwall_curr which refers to the previous time-step
-      write(*,*) 'n_wall_curr_i', n_wall_curr_i
+      if (my_id .eq. 0) write(*,*) 'n_wall_curr_i', n_wall_curr_i
       do k = 1, n_wall_curr_i
       
       ! --- contribution from not distributed matrices
@@ -2789,12 +2836,13 @@ module vacuum_response
 
       dwall_curr_i(:) = 0.d0
 
-      ! N.B. Sign change is present! Since Ci_star from CARIDDI already contains the minus sign! See documentation
+      ! N.B. Sign change is present and accounted for in read_starwall_response!
+      ! Ci_star from CARIDDI already contains a minus sign! See documentation
       !> corresponds to matrix A_i in documentation
-      call extended_matrix_vector(my_id, (1.d0+zeta), sr%a_yie, inv_tmp_d_sii, &
+      call extended_matrix_vector(my_id, -(1.d0+zeta), sr%a_yie, inv_tmp_d_sii, &
                                 dpsibnd_vec(:), .false., dwall_curr_i, .false.) 
       !> corresponds to matrix D_i in documentation
-      call extended_matrix_vector(my_id, -zeta, sr%a_yie, inv_tmp_d_sii, &
+      call extended_matrix_vector(my_id, zeta, sr%a_yie, inv_tmp_d_sii, &
                                 old_dpsibnd_vec(:), .false., dwall_curr_i, .true.) 
        
       dwall_curr_i(:) = dwall_curr_i(:) + dwall_curr_i2(:)
@@ -2805,12 +2853,25 @@ module vacuum_response
 
       ! Get electrode current from Jn
       call get_Ielec_halo(node_list, element_list, bnd_elm_list, bnd_node_list, 'gauss', my_id, a_mat%i_tor_min, a_mat%i_tor_max)
-
+      if (my_id .eq. 0) then
+      OPEN(UNIT=12, FILE="I_elec_w_after.dat", ACTION="write", STATUS="replace")
+      DO k=1,sr%n_electrode_w-1
+        WRITE(12,*) I_elec_w(k)
+      END DO
+      CLOSE(12)
+            OPEN(UNIT=12, FILE="I_elec_J_after.dat", ACTION="write", STATUS="replace")
+      DO k=1,sr%n_electrode_J-1
+        WRITE(12,*) I_elec_J(k)
+      END DO
+      CLOSE(12)
+      endif
       ! iwe = (FwtFw)^-1 * iel_w
 
-      write(21,*) 'FwtFw: infos', sr%fwtfw_inv%distrib, sr%fwtfw_inv%row_wise, sr%fwtfw_inv%ind_start, sr%fwtfw_inv%ind_end, sr%fwtfw_inv%step
-      21 format(1x, 'distributed', L2, ',rowwise?', L2, ',ind_start of chunk:', I4, ',ind_end of chunk:', I4, ', step' , I4)
-
+      if (my_id .eq. 0) then
+        write(21,*) 'FwtFw: infos', sr%fwtfw_inv%distrib, sr%fwtfw_inv%row_wise, sr%fwtfw_inv%ind_start, sr%fwtfw_inv%ind_end, sr%fwtfw_inv%step
+        21 format(1x, 'distributed', L2, ',rowwise?', L2, ',ind_start of chunk:', I4, ',ind_end of chunk:', I4, ', step' , I4)
+      endif
+      
       if (.not. allocated(diag_1)) ALLOCATE (diag_1(n_wall_curr_e))
       diag_1(:) = 1.d0
       call extended_matrix_vector(my_id, 1.d0, sr%fwtfw_inv, diag_1, &
@@ -3278,13 +3339,13 @@ module vacuum_response
           !response_d_b(:)   = 0.d0
           !response_d_c(:)   = 0.d0
 
-          ! N.B. Change of sign compared to eddy-only coupl., the Ci_star in CARIDDI already contains "-"
+          ! N.B. Change of sign compared to eddy-only coupl. is performed after reading, the Ci_star in CARIDDI already contains "-"
           do j = 1, size(response_m_a_i%loc_mat,2) 
-            response_m_a_i%loc_mat(:,j) = (1.d0+zeta) * sr%a_yie%loc_mat(:,j) / tmp_d_sii(:)
+            response_m_a_i%loc_mat(:,j) = -(1.d0+zeta) * sr%a_yie%loc_mat(:,j) / tmp_d_sii(:)
           end do
-          ! N.B. Change of sign compared to eddy-only coupl., the Ci_star in CARIDDI already contains "-"
+          ! N.B. Change of sign compared to eddy-only coupl. is performed after reading, the Ci_star in CARIDDI already contains "-"
           do j = 1, size(response_m_d_i%loc_mat,2)
-            response_m_d_i%loc_mat(:,j) = -zeta * sr%a_yie%loc_mat(:,j) / tmp_d_sii(:)
+            response_m_d_i%loc_mat(:,j) = zeta * sr%a_yie%loc_mat(:,j) / tmp_d_sii(:)
           end do
 
           ! --- m_e_i = a_ee - matmul(a_eyi, m_a)
@@ -3350,24 +3411,37 @@ module vacuum_response
         endif
        ! ================================================================================================
 
-      else ! (Ideal wall) (NOT DONE YET FOR HALOS)
+      ! ===================================== IDEAL WALL ================================================
+
+      else ! (Ideal wall) 
 
         response_m_a%loc_mat(:,:) = 0.d0
         response_d_b(:)   = 0.d0
         response_d_c(:)   = 0.d0
         response_d_b_i(:) = 0.d0
         response_d_c_i(:) = 0.d0
+        
+        ! response_m_e
+        if (halo_freeb .and. CARIDDI_mode) then 
+          response_m_e_i=0.0
+          response_m_e_i(sr%a_id%ind_start:sr%a_id%ind_end,:) =sr%a_id%loc_mat(:,:)
+          call MPI_AllREDUCE(MPI_IN_PLACE,response_m_e_i,size(response_m_e_i),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)        
+        else
+          response_m_e=0.0
+          response_m_e(sr%a_id%ind_start:sr%a_id%ind_end,:) =sr%a_id%loc_mat(:,:)
+          call MPI_AllREDUCE(MPI_IN_PLACE,response_m_e,size(response_m_e),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
+        endif
 
-        response_m_e=0.0
-        response_m_e(sr%a_id%ind_start:sr%a_id%ind_end,:) =sr%a_id%loc_mat(:,:)
-        call MPI_AllREDUCE(MPI_IN_PLACE,response_m_e,size(response_m_e),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
-
-
+          
         response_m_h =0.0
         response_m_h(sr%a_id%ind_start:sr%a_id%ind_end,:) = sr%a_id%loc_mat(:,:)
         call MPI_AllREDUCE(MPI_IN_PLACE,response_m_h,size(response_m_h),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
-
-        response_m_j(:,:) = 0.d0
+        
+        if (halo_freeb .and. CARIDDI_mode) then
+          response_m_j_i(:,:) = 0.d0
+        else
+          response_m_j(:,:) = 0.d0
+        endif
 
       end if
 

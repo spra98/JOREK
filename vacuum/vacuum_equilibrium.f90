@@ -236,7 +236,8 @@ module vacuum_equilibrium
 
       offset = sr%ind_start_coils
 
-      if (CARIDDI_mode .AND. halo_freeb) then
+      if (CARIDDI_mode .AND. halo_freeb) then ! Halo coupl.
+        if (my_id .eq. 0 ) write(*,*) 'Computing halo coupling equilibrium'
         do i = 1, n_wall_curr_i
           if ( (i>=sr%s_ww_ii_inv%ind_start) .and. (i<=sr%s_ww_ii_inv%ind_end) ) then
             wall_curr_i(i) = & 
@@ -244,7 +245,7 @@ module vacuum_equilibrium
           endif
         end do    
         call MPI_ALLReduce(MPI_IN_PLACE, wall_curr_i, size(wall_curr_i),MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,ierr) 
-      else     
+      else  ! Not halo coupl.     
         do i = 1, n_wall_curr
           if ( (i>=sr%s_ww_inv%ind_start) .and. (i<=sr%s_ww_inv%ind_end) ) then
             wall_curr(i) = & 
@@ -300,21 +301,21 @@ module vacuum_equilibrium
                   B_tan_coil_i     = 0.d0
                   B_tan_coil_i_loc = 0.d0
 
-                  if (CARIDDI_mode .AND. halo_freeb) then ! HALO
+                  if (CARIDDI_mode .AND. halo_freeb) then ! ------------------------------------------ HALO
                     if (i_resp_st>=sr%a_eyi%ind_start .AND. i_resp_st<=sr%a_eyi%ind_end) then
                       B_tan_coil_i_loc  = - sum (sr%a_eyi%loc_mat(i_resp_st-my_id*sr%a_eyi%step,:) * wall_curr_i(:) )
                     endif
                   
                     call MPI_Reduce(B_tan_coil_i_loc, B_tan_coil_i, 1, MPI_DOUBLE_PRECISION,MPI_SUM,0,MPI_COMM_WORLD,ierr)
                   
-                  else ! NOT HALO
+                  else ! ---------------------------------------------------------------------------- NOT HALO
 
                     if (i_resp_st>=sr%a_ey%ind_start .AND. i_resp_st<=sr%a_ey%ind_end) then
                       B_tan_coil_i_loc  = - sum (sr%a_ey%loc_mat(i_resp_st-my_id*sr%a_ey%step,:) * wall_curr(:) )
                     endif
                     call MPI_Reduce(B_tan_coil_i_loc, B_tan_coil_i, 1, MPI_DOUBLE_PRECISION,MPI_SUM,0,MPI_COMM_WORLD,ierr)
-                  endif ! HALO
-                else
+                  endif ! HALO clause
+                else ! starwall_equil_coils clause
                   B_tan_coil_i         =   sum ( I_coils(:) * bext_tan(i_resp,:) )  
                 endif
                 

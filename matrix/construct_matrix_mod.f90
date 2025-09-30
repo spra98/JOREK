@@ -294,7 +294,7 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
   use mod_axis_treatment
   use mod_simulation_data, only: type_MHD_SIM
   use global_distributed_matrix, only: global_matrix_structure_vacuum
-  use vacuum, only: get_Ielec_halo
+
   
   !$ use omp_lib
   implicit none
@@ -343,7 +343,6 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
   integer                           :: i_v(n_var)
   integer, allocatable              :: i_harm(:)
   integer                           :: comm, ierr, counts
-  real*8, allocatable               :: I_elec_J(:), I_elec_w(:)
   
   ! --- Timing call
   call r3_info_begin (r3_info_index_0, 'construct_matrix')

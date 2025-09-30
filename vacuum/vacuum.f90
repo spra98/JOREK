@@ -1126,7 +1126,11 @@ module vacuum
       endif
       call MPI_BCAST(n_coils,1,MPI_INTEGER,0,MPI_COMM_WORLD,ierr)
       
-      if ( n_wall_curr == 0 ) return
+      if (halo_freeb .and. CARIDDI_mode) then
+        if (n_wall_curr_i + n_wall_curr_e == 0) RETURN
+      else 
+        if ( n_wall_curr == 0 ) return
+      endif
       
       if ( my_id == 0 ) then
         if ( allocated(net_tor_wall_curr) ) then
@@ -1405,6 +1409,10 @@ module vacuum
 
 
   ! Define electrode currents (complete and full rank)
+
+  !!!!!!! ================================================================================================
+  !!!!!!!========= R.S. > PROBLEM: This repeated deallocation/allocation will slow things down! Fix it! ==========
+  !!!!!! =================================================================================================
   if (allocated(I_elec_J_complete)) deallocate(I_elec_J_complete)
   allocate(I_elec_J_complete(sr%n_electrode_J))
   I_elec_J_complete = 0.d0
@@ -1420,7 +1428,7 @@ module vacuum
   if (allocated(I_elec_w)) deallocate(I_elec_w)
   allocate(I_elec_w(sr%n_electrode_w-1))
   I_elec_w = 0.d0 
-
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   select case (mapping)
     
     case ('equidistant')
