@@ -1811,14 +1811,14 @@ module vacuum
       !===================  N.B. We use the CARIDDI-computed matrices in JOREK space to map to the electrode surfaces ===========
       ! =========================================================================================================================
       
-      ! Shell
+      ! Shell - reference normal orientation
       do i =1,sr%n_electrode_J
         I_elec_J_complete(i) = sum(sr%Jmat_J(i,:)*Jn_bez(:))
       end do
 
-      ! Wall
+      ! Wall - opposite normal orientation
       do i =1,sr%n_electrode_w
-        I_elec_w_complete(i) = sum(sr%Jmat_w(i,:)*Jn_bez(:))
+        I_elec_w_complete(i) = -sum(sr%Jmat_w(i,:)*Jn_bez(:))
       end do
 
       I_elec_J = I_elec_J_complete(1:sr%n_electrode_J-1)

@@ -89,6 +89,7 @@ real*8  :: eq_g_1D(n_plane,0:n_var,n_gauss), eq_s_1D(n_plane,0:n_var,n_gauss)
 real*8  :: delta_g_1D(n_plane,0:n_var,n_gauss)
 real*8  :: eq_t_1D(n_plane,0:n_var,n_gauss), eq_p_1D(n_plane,0:n_var,n_gauss)
 real*8  :: s_norm_1D(n_plane, n_gauss), stel_current_source_1D(n_plane,n_gauss)
+real*8  :: int_B_plane_v(n_plane), int_B_plane, int_B_elm, B_tan_ms, L_ms, e_par(2), B_pol(2), R1, R2, Z1, Z2
 
 real*8  :: current_source, particle_source, heat_source, heat_source_i, heat_source_e, rotation_source
 real*8  :: xt, t_norm, rho_norm, t_norm2
@@ -150,6 +151,7 @@ real*8  :: vpar_part_flux, vperp_part_flux, Dperp_part_flux, Dpar_part_flux, neu
 real*8  :: vpar_part_flow, vperp_part_flow, Dperp_part_flow, Dpar_part_flow, neut_part_flow
 real*8  :: poynting_flux, poynting_tmp, dpsi_dt
 real*8  :: s_or_t,sg,tg
+logical :: s_const
 real*8  :: R,R_s,R_t,R_phi,R_st,R_ss,R_tt,R_sp,R_tp,R_pp
 real*8  :: Z,Z_s,Z_t,Z_phi,Z_st,Z_ss,Z_tt,Z_sp,Z_tp,Z_pp
 real*8  :: RH,RH_s,RH_t,RH_st,RH_ss,RH_tt
@@ -159,7 +161,7 @@ real*8  :: PS,PS_s,PS_t,PS_st,PS_ss,PS_tt
 real*8  :: vp,vp_s,vp_t,vp_st,vp_ss,vp_tt 
 real*8  :: rn,rn_s,rn_t,rn_st,rn_ss,rn_tt 
 real*8  :: rimp,rimp_s,rimp_t,rimp_st,rimp_ss,rimp_tt 
-real*8  :: psi_s, psi_t, rho_s, rho_t, T_s, T_t, Ti, Ti_s, Ti_t, Te, Te_s, Te_t, p0_s, p0_t, u0_s, u0_t, ps0_s, ps0_t, p0_p, rhon_s, rhon_t, rhoimp_s, rhoimp_t
+real*8  :: psi_s, psi_R, psi_Z, psi_t, rho_s, rho_t, T_s, T_t, Ti, Ti_s, Ti_t, Te, Te_s, Te_t, p0_s, p0_t, u0_s, u0_t, ps0_s, ps0_t, p0_p, rhon_s, rhon_t, rhoimp_s, rhoimp_t
 real*8  :: u0_p, u_s, u_t, u_p
 real*8  :: u0_x, u0_y
 real*8  :: viscopar_flux, viscopar_f, vpar_s, vpar_t, vpar_x, vpar_y, li3_tot, li3
@@ -1448,7 +1450,9 @@ aux_q0    = 0.d0; aux_jx0   = 0.d0; aux_jy0   = 0.d0; aux_jz0   = 0.d0; aux_jz0_
           *(0.5d0*T_min_neg * ( 1+exp( (min(T0,T_min_neg)-T_min_neg)/(0.5d0*T_min_neg) )) -min(T0,T_min_neg))
 #endif /* WITH_TiTe */
           C_intern = C_intern - zj0 /BigR * xjac *        wst * delta_phi    ! 2D integral
+          C_intern_p(mp) = C_intern_p(mp) - zj0 /BigR * xjac *        wst * delta_phi    ! 2D integral
           C_intern_3d = C_intern_3d - zj0 * xjac * wst * delta_phi ! 3D integral
+          C_intern_p_3d(mp) = C_intern_p_3d(mp) - zj0 * xjac * wst * delta_phi ! 3D integral
           area1    = area1    +  xjac * wst * delta_phi         
           Vol   = Vol   +             xjac * BigR * wst * delta_phi
           H_int = H_int + heat_source     * xjac * BigR * wst * delta_phi
@@ -1505,7 +1509,9 @@ aux_q0    = 0.d0; aux_jx0   = 0.d0; aux_jy0   = 0.d0; aux_jz0   = 0.d0; aux_jz0_
                *(0.5d0*T_min_neg * (1 + exp( (min(T0,T_min_neg)-T_min_neg)/(0.5d0*T_min_neg) ) ) -min(T0,T_min_neg))
 #endif /* WITH_TiTe */
           C_ext = C_ext - zj0 / BigR * xjac *        wst * delta_phi  ! 2D integral
+          C_ext_p(mp) = C_ext_p(mp) - zj0 / BigR * xjac *        wst * delta_phi  ! 2D integral
           C_ext_3d = C_ext_3d - zj0 * xjac * wst * delta_phi
+          C_ext_p_3d(mp) = C_ext_p_3d(mp) - zj0 * xjac * wst * delta_phi
           H_ext = H_ext + heat_source     * xjac * BigR * wst * delta_phi
           S_ext = S_ext + particle_source * xjac * BigR * wst * delta_phi
           VP_ext = VP_ext + r0 * vpar0**2 * BB2 * xjac * BigR * wst * delta_phi
@@ -1535,10 +1541,10 @@ aux_q0    = 0.d0; aux_jx0   = 0.d0; aux_jy0   = 0.d0; aux_jz0   = 0.d0; aux_jz0_
       enddo
     enddo
 
-    C_intern_p(mp)    = C_intern
-    C_intern_p_3d(mp) = C_intern_3d
-    C_ext_p(mp)       = C_ext
-    C_ext_p_3d(mp)    = C_ext_3d
+    !C_intern_p(mp)    = C_intern
+    !C_intern_p_3d(mp) = C_intern_3d
+    !C_ext_p(mp)       = C_ext
+    !C_ext_p_3d(mp)    = C_ext_3d
 
   enddo ! Toroidal loop ends here
   do iv = 1, n_vertex_max
@@ -2008,6 +2014,118 @@ do m_bndelem = 1, bnd_elm_list%n_bnd_elements
 
 enddo !--- bnd elements, end of calculation of boundary fluxes
 
+
+! ! ------- Calculate Ip asymmetry
+if (my_id .eq. 0) write(*,*) '***************************'
+if (my_id .eq. 0) write(*,*) '  Computing Ip asymmetry   '
+if (my_id .eq. 0) write(*,*) '***************************'
+
+int_B_plane_v(:) = 0.d0
+x_s_1D(:,:)        = 0.d0
+y_s_1D(:,:)        = 0.d0
+
+! Save values for each plane
+do mp=1, n_plane
+
+  int_B_plane = 0.d0
+  ! BND_ELEM LOOP
+  do m_bndelem = 1, bnd_elm_list%n_bnd_elements
+
+    bndelem = bnd_elm_list%bnd_element(m_bndelem)
+    elm_k   = element_list%element(bndelem%element)
+    mv1     = bnd_elm_list%bnd_element(m_bndelem)%side
+    m_elm   = bnd_elm_list%bnd_element(m_bndelem)%element
+    
+    ! Nodes coordinates (for orientation)
+    R1 = node_list%node(bndelem%vertex(1))%x(1,1,1)
+    Z1 = node_list%node(bndelem%vertex(1))%x(1,1,2)
+    R2 = node_list%node(bndelem%vertex(2))%x(1,1,1)
+    Z2 = node_list%node(bndelem%vertex(2))%x(1,1,2)
+
+    do k_vertex = 1, 2
+      do k_dof = 1, 2
+        k_node      = bndelem%vertex(k_vertex)
+        k_dir       = bndelem%direction(k_vertex,k_dof)
+        k_size      = bndelem%size(k_vertex,k_dof)
+        call make_deep_copy_node(node_list%node(k_node), node_k)
+
+          do in=1,n_coord_tor
+            x_s_1D(mp,:)   = x_s_1D(mp,:)  + node_k%x(in,k_dir,1) * k_size * H1_s(k_vertex,k_dof,:) *HZ_coord(in,mp)
+            y_s_1D(mp,:)   = y_s_1D(mp,:)  + node_k%x(in,k_dir,2) * k_size * H1_s(k_vertex,k_dof,:) *HZ_coord(in,mp)
+          enddo
+    
+      enddo  ! k_dof
+    enddo    ! k_vertex
+    int_B_elm = 0.d0
+    psi_s     = 0.d0
+    psi_t     = 0.d0
+    do ms=1,n_gauss
+
+      s_or_t = xgauss(ms) 
+
+      ! --- Which s and t values correspond to the current point and is the
+      !     boundary element an s=const or t=const side of the 2D element?
+      select case (mv1)
+      case (1)
+        sg = s_or_t;  tg = 0.d0;  s_const = .false.
+      case (2)
+        sg = 1.d0;    tg = s_or_t; s_const = .true.
+      case (3)
+        sg = s_or_t;  tg = 1.d0; s_const = .false. 
+      case (4)
+        sg = 0.d0;    tg = s_or_t; s_const = .true.
+      end select
+      
+      phi       = 2.d0*PI*float(mp-1)/float(n_plane) / float(n_period)
+      call interp_RZP(node_list,element_list,m_elm,sg,tg,phi,R,R_s,R_t,R_phi,R_st,R_ss,R_tt,R_sp,R_tp,R_pp,Z,Z_s,Z_t,Z_phi,Z_st,Z_ss,Z_tt,Z_sp,Z_tp,Z_pp)
+      
+      BigR   = R
+      xjac   = R_s * Z_t - R_t * Z_s
+
+      ! --- Tangential vector to the interface
+      if ( s_const ) then
+        e_par = (/ R_t, Z_t /) / sqrt( R_t**2 + Z_t**2 ) * (R_t * (R2-R1) + Z_t * (Z2-Z1))/abs(R_t * (R2-R1) + Z_t * (Z2-Z1))
+      else
+        e_par = (/ R_s, Z_s /) / sqrt( R_s**2 + Z_s**2 ) * (R_s * (R2-R1) + Z_s * (Z2-Z1))/abs(R_s * (R2-R1) + Z_s * (Z2-Z1))
+      end if
+      
+      ! ======================== HARMONICS LOOP for psi ============================================== 
+      do in = 1,n_tor
+      
+        ! Find psi_s, psi_t   
+        call interp(node_list,element_list,m_elm,var_psi,in,sg,tg,PS,PS_s,PS_t,PS_st,PS_ss,PS_tt)
+        psi_s = psi_s + PS_s * HZ(in,mp)
+        psi_t = psi_t + PS_t * HZ(in,mp)
+      
+      enddo  ! n_tor loop
+      ! ============================================================================================
+
+      psi_R = (   Z_t * psi_s - Z_s * psi_t ) / xjac
+      psi_Z = ( - R_t * psi_s + R_s * psi_t ) / xjac
+
+      B_pol = (/ psi_Z, -psi_R /) / BigR
+
+      B_tan_ms = sum(B_pol * e_par)
+      
+      L_ms = sqrt(x_s_1D(mp,ms)**2 + y_s_1D(mp,ms)**2) * wgauss(ms)
+
+      int_B_elm = int_B_elm + B_tan_ms * L_ms 
+
+    enddo ! do n_gauss
+
+    int_B_plane = int_B_plane + int_B_elm
+  enddo  ! do m_bndelem
+
+  int_B_plane_v (mp) = int_B_plane / MU_ZERO
+enddo     ! do n_plane
+
+if (my_id .eq. 0) then
+OPEN(UNIT=12, FILE="Ip_asymm.dat", ACTION="write", STATUS="replace")
+DO k = 1,n_plane
+  WRITE(12,*) int_B_plane_v(k)
+END DO
+CLOSE(12)
+endif
 ! --- gather contribution from all MPI processes
 #ifndef NOMPIVERSION
 call MPI_AllReduce(D_int,density_in,1,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,ierr)

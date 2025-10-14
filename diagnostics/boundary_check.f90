@@ -21,8 +21,10 @@ subroutine boundary_check(my_id)
   ! --- Local variables
   integer, parameter     :: N_POINTS = 3 ! Number of evaluation points per element
   type(type_bnd_element) :: bndelem_m
-  real*8, allocatable    :: B_par(:), B_par_v(:)
+  real*8, allocatable    :: B_par(:), B_par_v(:), B_par_v_eddy(:) , B_par_v_halo(:)
   real*8, allocatable    :: val_integral(:), err_integral(:)
+  real*8, allocatable    :: val_integral_eddy(:), err_integral_eddy(:)
+  real*8, allocatable    :: val_integral_halo(:), err_integral_halo(:)
   real*8, allocatable    :: psibnd_vec(:), dpsibnd_vec(:), psibnd_coils(:)
   integer  :: l_starwall, l_tor
   integer  :: m_bndelem, m_pt, m_elm, mv1
@@ -36,7 +38,7 @@ subroutine boundary_check(my_id)
   real*8   :: B_pol(2)           ! Poloidal magnetic field
   real*8   :: e_par(2)           ! Vector tangential to interface
   real*8   :: P_R, P_Z           ! dPsi/dR, dPsi/dZ
-  real*8   :: R1, R2, Z1, Z2, B_par_v_tmp
+  real*8   :: R1, R2, Z1, Z2, B_par_v_tmp, B_par_v_eddy_tmp, B_par_v_halo_tmp
   logical  :: s_const            ! Is the bound. elem. an s=const side of the 2D element?
   integer  :: ierr,step          ! variables for parallel version 
   
@@ -48,15 +50,28 @@ subroutine boundary_check(my_id)
 
   call tr_allocate(val_integral,1,sr%n_tor,"val_integral",CAT_GRID)
   call tr_allocate(err_integral,1,sr%n_tor,"err_integral",CAT_GRID)
+  call tr_allocate(val_integral_eddy,1,sr%n_tor,"val_integral_eddy",CAT_GRID)
+  call tr_allocate(err_integral_eddy,1,sr%n_tor,"err_integral_eddy",CAT_GRID)
+  call tr_allocate(val_integral_halo,1,sr%n_tor,"val_integral_halo",CAT_GRID)
+  call tr_allocate(err_integral_halo,1,sr%n_tor,"err_integral_halo",CAT_GRID)
   call tr_allocate(psibnd_vec,1,n_dof_starwall,"psibnd_vec",CAT_GRID)
   call tr_allocate(psibnd_coils,1,n_dof_starwall,"psibnd_vec",CAT_GRID)
   call tr_allocate(dpsibnd_vec,1,n_dof_starwall,"dpsibnd_vec",CAT_GRID)
   call tr_allocate(B_par,1,sr%n_tor,"B_par",CAT_GRID)
   call tr_allocate(B_par_v,1,sr%n_tor,"B_par_v",CAT_GRID)
+  call tr_allocate(B_par_v_eddy,1,sr%n_tor,"B_par_v_eddy",CAT_GRID)
+  call tr_allocate(B_par_v_halo,1,sr%n_tor,"B_par_v_halo",CAT_GRID)
+
   val_integral(:) = 0.d0
   err_integral(:) = 0.d0
+  val_integral_eddy(:) = 0.d0
+  err_integral_eddy(:) = 0.d0
+  val_integral_halo(:) = 0.d0
+  err_integral_halo(:) = 0.d0
   B_par(:)        = 0.d0
   B_par_v(:)      = 0.d0
+  B_par_v_eddy(:) = 0.d0
+  B_par_v_halo(:) = 0.d0
   i_resp_0        = 0 
 
   call det_psibnd_vec(bnd_node_list, node_list, psibnd_vec, dpsibnd_vec, psibnd_coils)
@@ -78,7 +93,8 @@ subroutine boundary_check(my_id)
 
       B_par(:)   = 0.d0
       B_par_v(:) = 0.d0
-
+      B_par_v_eddy(:) = 0.d0
+      B_par_v_halo(:) = 0.d0
       ! --- Determine 1D basis function (and derivatives) at current point
       s_or_t = float(m_pt-1)/float(N_POINTS-1)
 
@@ -109,9 +125,15 @@ subroutine boundary_check(my_id)
       else
         e_par = (/ R_s, Z_s /) / sqrt( R_s**2 + Z_s**2 ) * (R_s * (R2-R1) + Z_s * (Z2-Z1))/abs(R_s * (R2-R1) + Z_s * (Z2-Z1))
       end if
-
-      step       = sr%a_ye%step ! for distributed matrices
-      B_par_v(:) = 0.d0
+      
+      if (halo_freeb) then
+        step = sr%a_yie%step
+      else
+        step       = sr%a_ye%step ! for distributed matrices
+      endif
+      ! B_par_v(:) = 0.d0
+      ! B_par_v_eddy(:) = 0.d0
+      ! B_par_v_halo(:) = 0.d0
       
       ! --- Select one STARWALL harmonic
 !$omp parallel do                                                                                  &
@@ -119,10 +141,10 @@ subroutine boundary_check(my_id)
 !$omp   default(none)                                                                              &
 !$omp   shared(node_list, element_list, m_elm, s_pt, t_pt, sr, bndelem_m, bnd_node_list, H1,       &
 !$omp     resistive_wall, starwall_equil_coils, my_id, psibnd_vec, psibnd_coils, wall_curr,        &
-!$omp     bext_tan, I_coils, B_par_v, R, R_s, R_t, Z, Z_s, Z_t, &
-!$omp     xjac, e_par, B_par, step)                                                                &
+!$omp     bext_tan, I_coils, B_par_v, B_par_v_eddy, B_par_v_halo, R, R_s, R_t, Z, Z_s, Z_t, &
+!$omp     xjac, e_par, B_par, step, halo_freeb, wall_curr_i, wall_curr_e, I_elec_j)                &
 !$omp   private(l_starwall, i_vertex, i_dof, l_tor, P, P_s, P_t, P_st, P_ss, P_tt, P_R, P_Z, B_pol,&
-!$omp     i_node, i_node_bnd, i_size, i_resp_old, i_resp, i_resp_0, basfunc_i, B_par_v_tmp)
+!$omp     i_node, i_node_bnd, i_size, i_resp_old, i_resp, i_resp_0, basfunc_i, B_par_v_tmp, B_par_v_eddy_tmp, B_par_v_halo_tmp)
       L_LS: do l_starwall = 1, sr%n_tor
 
         l_tor = sr%i_tor(l_starwall)
@@ -163,24 +185,68 @@ subroutine boundary_check(my_id)
 
             ! --- Determine B_{||,v} as prescribed by the vacuum.
             B_par_v_tmp = 0.d0
+            B_par_v_eddy_tmp = 0.d0
+            B_par_v_halo_tmp = 0.d0
+
             if ( resistive_wall ) then
               if (  (l_tor == 1) .and. (.not. starwall_equil_coils)  )  then
+                
+                ! ========================= HALO COUPLING ======================================================
+                if (halo_freeb) then
+                  if (i_resp>=sr%a_eyi%ind_start .AND. i_resp<=sr%a_eyi%ind_end) then
+                    B_par_v_halo_tmp = basfunc_i * (                                                      &
+                      + sum( sr%a_ee%loc_mat(i_resp-step*my_id,:) * (psibnd_vec(:)-psibnd_coils(:)) )&
+                      + sum( sr%a_eyi%loc_mat(i_resp-step*my_id,:) * wall_curr_i(:) )                   &
+                      + sum( sr%a_eye%loc_mat(i_resp-step*my_id,:) * wall_curr_e(:) )                &
+                      - sum( sr%aeq_el%loc_mat(i_resp-step*my_id,:) * I_elec_J(:)   )                &
+                      - sum( bext_tan(i_resp_0, :) * I_coils(:) ) )
 
-                if (i_resp>=sr%a_ey%ind_start .AND. i_resp<=sr%a_ey%ind_end) then
-                  B_par_v_tmp = basfunc_i * (                                                      &
-                    + sum( sr%a_ee%loc_mat(i_resp-step*my_id,:) * (psibnd_vec(:)-psibnd_coils(:)) )&
-                    + sum( sr%a_ey%loc_mat(i_resp-step*my_id,:) * wall_curr(:) )                   &
-                    - sum( bext_tan(i_resp_0, :) * I_coils(:) ) )
-                end if
+                    B_par_v_eddy_tmp = basfunc_i * (                                                      &
+                      + sum( sr%a_ee%loc_mat(i_resp-step*my_id,:) * (psibnd_vec(:)-psibnd_coils(:)) )&
+                      + sum( sr%a_eyi%loc_mat(i_resp-step*my_id,:) * wall_curr_i(:) )                   &                
+                      - sum( bext_tan(i_resp_0, :) * I_coils(:) ) )
+                  end if
+                
+                ! ========================= EDDY COUPLING ======================================================
+                else   
+                  if (i_resp>=sr%a_ey%ind_start .AND. i_resp<=sr%a_ey%ind_end) then
+                    B_par_v_tmp = basfunc_i * (                                                      &
+                      + sum( sr%a_ee%loc_mat(i_resp-step*my_id,:) * (psibnd_vec(:)-psibnd_coils(:)) )&
+                      + sum( sr%a_ey%loc_mat(i_resp-step*my_id,:) * wall_curr(:) )                   &
+                      - sum( bext_tan(i_resp_0, :) * I_coils(:) ) )
+                  end if
+                
+                endif
+                ! ============================ COUPLING ENDIF ==================================================
 
               else
 
-                if (i_resp>=sr%a_ey%ind_start .AND. i_resp<=sr%a_ey%ind_end) then
-                  B_par_v_tmp = basfunc_i * (                                                      &
-                    + sum( sr%a_ee%loc_mat(i_resp-step*my_id, :) * psibnd_vec(:) )                 &
-                    + sum( sr%a_ey%loc_mat(i_resp-step*my_id, :) * wall_curr(:)  ) )
-                end if
-                 
+                ! ========================= HALO COUPLING ======================================================
+                if (halo_freeb) then
+                  if (i_resp>=sr%a_eyi%ind_start .AND. i_resp<=sr%a_eyi%ind_end) then
+                    B_par_v_halo_tmp = basfunc_i * (                                                      &
+                      + sum( sr%a_ee%loc_mat(i_resp-step*my_id,:) * (psibnd_vec(:)-psibnd_coils(:)) )&
+                      + sum( sr%a_eyi%loc_mat(i_resp-step*my_id,:) * wall_curr_i(:) )                   &
+                      + sum( sr%a_eye%loc_mat(i_resp-step*my_id,:) * wall_curr_e(:) )                &
+                      - sum( sr%aeq_el%loc_mat(i_resp-step*my_id,:) * I_elec_J(:)   )  )              
+
+                    B_par_v_eddy_tmp = basfunc_i * (                                                      &
+                      + sum( sr%a_ee%loc_mat(i_resp-step*my_id,:) * (psibnd_vec(:)-psibnd_coils(:)) )&
+                      + sum( sr%a_eyi%loc_mat(i_resp-step*my_id,:) * wall_curr_i(:) )    )
+                        
+                  end if              
+
+                else
+                ! ========================= EDDY COUPLING ======================================================
+
+                  if (i_resp>=sr%a_ey%ind_start .AND. i_resp<=sr%a_ey%ind_end) then
+                    B_par_v_tmp = basfunc_i * (                                                      &
+                      + sum( sr%a_ee%loc_mat(i_resp-step*my_id, :) * psibnd_vec(:) )                 &
+                      + sum( sr%a_ey%loc_mat(i_resp-step*my_id, :) * wall_curr(:)  ) )
+                  end if
+                
+                endif   
+                ! ============================ COUPLING ENDIF ==========================================================
 
               end if
             else ! if ( resistive_wall ) then
@@ -204,7 +270,12 @@ subroutine boundary_check(my_id)
             end if
             
 !$omp critical
-            B_par_v(l_starwall) = B_par_v(l_starwall) + B_par_v_tmp
+            if (halo_freeb) then
+              B_par_v_eddy(l_starwall) = B_par_v_eddy(l_starwall) + B_par_v_eddy_tmp
+              B_par_v_halo(l_starwall) = B_par_v_halo(l_starwall) + B_par_v_halo_tmp
+            else
+              B_par_v(l_starwall) = B_par_v(l_starwall) + B_par_v_tmp
+            endif
 !$omp end critical
 
 !            write(*,'(6i5,8e12.4)') l_starwall,i_vertex,i_dof,i_node,i_node_bnd,i_resp,i_size,basfunc_i
@@ -214,25 +285,49 @@ subroutine boundary_check(my_id)
       end do L_LS
 !$omp end parallel do
  
-      call MPI_AllREDUCE(MPI_IN_PLACE,B_par_v, size(B_par_v), MPI_DOUBLE_PRECISION,MPI_SUM, MPI_COMM_WORLD,ierr)
-
+      if (halo_freeb) then
+        call MPI_AllREDUCE(MPI_IN_PLACE,B_par_v_eddy, size(B_par_v_eddy), MPI_DOUBLE_PRECISION,MPI_SUM, MPI_COMM_WORLD,ierr)
+        call MPI_AllREDUCE(MPI_IN_PLACE,B_par_v_halo, size(B_par_v_halo), MPI_DOUBLE_PRECISION,MPI_SUM, MPI_COMM_WORLD,ierr)
+      else
+        call MPI_AllREDUCE(MPI_IN_PLACE,B_par_v, size(B_par_v), MPI_DOUBLE_PRECISION,MPI_SUM, MPI_COMM_WORLD,ierr)
+      endif
       ! --- Debugging output
       if ( vacuum_debug .and. (my_id == 0) ) then
         write(88,'(20ES15.5)') (m_bndelem-1 + s_or_t)/REAL(bnd_elm_list%n_bnd_elements), B_par(:)
-        write(89,'(20ES15.5)') (m_bndelem-1 + s_or_t)/REAL(bnd_elm_list%n_bnd_elements), B_par_v(:)
+        if (halo_freeb) then
+          write(89,'(20ES15.5)') (m_bndelem-1 + s_or_t)/REAL(bnd_elm_list%n_bnd_elements), B_par_v_eddy(:)
+          write(89,'(20ES15.5)') (m_bndelem-1 + s_or_t)/REAL(bnd_elm_list%n_bnd_elements), B_par_v_halo(:)
+        else
+          write(89,'(20ES15.5)') (m_bndelem-1 + s_or_t)/REAL(bnd_elm_list%n_bnd_elements), B_par_v(:)
+        endif
       end if
 
       ! --- Integration of B_par_v values and differences between B_par and B_par_v.
-      val_integral(:) = val_integral(:) + abs( B_par_v(:) )
-      err_integral(:) = err_integral(:) + abs( B_par(:) - B_par_v(:) )
-
+      if (halo_freeb) then
+        val_integral_eddy(:) = val_integral_eddy(:) + abs( B_par_v_eddy(:) )
+        err_integral_eddy(:) = err_integral_eddy(:) + abs( B_par(:) - B_par_v_eddy(:) ) 
+        val_integral_halo(:) = val_integral_halo(:) + abs( B_par_v_halo(:) )
+        err_integral_halo(:) = err_integral_halo(:) + abs( B_par(:) - B_par_v_halo(:) ) 
+      else   
+        val_integral(:) = val_integral(:) + abs( B_par_v(:) )
+        err_integral(:) = err_integral(:) + abs( B_par(:) - B_par_v(:) )
+      endif
     end do L_MP
 
   end do L_MB
   
-  if ( (minval(abs(val_integral)) /= 0.d0) .and. (my_id == 0) ) then
-    write(*,'(1x,A,99ES15.5)') 'Relative errors in harmonics:', err_integral(:) / val_integral(:), err_integral(:), val_integral(:)
-  end if
+  if (halo_freeb) then
+    if ( (minval(abs(val_integral_eddy)) /= 0.d0) .and. (my_id == 0) ) then
+      write(*,'(1x,A,99ES15.5)') 'Relative errors in eddy harmonics:', err_integral_eddy(:) / val_integral_eddy(:), err_integral_eddy(:), val_integral_eddy(:)
+    endif
+    if ( (minval(abs(val_integral_halo)) /= 0.d0) .and. (my_id == 0) ) then
+      write(*,'(1x,A,99ES15.5)') 'Relative errors in halo harmonics:', err_integral_halo(:) / val_integral_halo(:), err_integral_halo(:), val_integral_halo(:)
+    endif
+  else
+    if ( (minval(abs(val_integral)) /= 0.d0) .and. (my_id == 0) ) then
+      write(*,'(1x,A,99ES15.5)') 'Relative errors in harmonics:', err_integral(:) / val_integral(:), err_integral(:), val_integral(:)
+    end if
+  endif
 
   ! --- Debugging output
   if ( vacuum_debug .and. (my_id == 0) ) then
@@ -248,8 +343,14 @@ subroutine boundary_check(my_id)
   call tr_deallocate(psibnd_vec,"psibnd_vec",CAT_GRID)
   call tr_deallocate(dpsibnd_vec,"dpsibnd_vec",CAT_GRID)
   call tr_deallocate(B_par,"B_par",CAT_GRID)
+  call tr_deallocate(B_par_v_eddy,"B_par_v_eddy",CAT_GRID)
+  call tr_deallocate(B_par_v_halo,"B_par_v_halo",CAT_GRID)
   call tr_deallocate(B_par_v,"B_par_v",CAT_GRID)
   call tr_deallocate(val_integral,"val_integral",CAT_GRID)
   call tr_deallocate(err_integral,"err_integral",CAT_GRID)
+  call tr_deallocate(val_integral_eddy,"val_integral_eddy",CAT_GRID)
+  call tr_deallocate(err_integral_eddy,"err_integral_eddy",CAT_GRID)
+  call tr_deallocate(val_integral_halo,"val_integral_halo",CAT_GRID)
+  call tr_deallocate(err_integral_halo,"err_integral_halo",CAT_GRID)
 
 end subroutine boundary_check
