@@ -156,6 +156,9 @@ module live_data
     if (allocated(Ip_tot_t)) call tr_deallocate(Ip_tot_t,"Ip_tot_t",CAT_UNKNOWN)
     if (nstep .gt. 0) call tr_allocate(Ip_tot_t,1,index_start+nstep,"Ip_tot_t",CAT_UNKNOWN)
 
+    if (allocated(Ip_asymm_t)) call tr_deallocate(Ip_asymm_t,"Ip_asymm_t",CAT_UNKNOWN)
+    if (nstep .gt. 0) call tr_allocate(Ip_asymm_t,1,index_start+nstep,"Ip_asymm_t",CAT_UNKNOWN)
+
     if (allocated(flux_Pvn_t)) call tr_deallocate(flux_Pvn_t,"flux_Pvn_t",CAT_UNKNOWN)
     if (nstep .gt. 0) call tr_allocate(flux_Pvn_t,1,index_start+nstep,"flux_Pvn_t",CAT_UNKNOWN)
 
@@ -730,7 +733,7 @@ module live_data
       current_t, beta_p_t, beta_t_t, beta_n_t, density_in_t, density_out_t, pressure_in_t,               &
       pressure_out_t, heat_src_in_t, heat_src_out_t, part_src_in_t, part_src_out_t, &
       E_tot_t, Helicity_tot_t, Kin_perp_tot_t, thermal_tot_t, kin_par_tot_t, ohmic_tot_t,      &
-      Wmag_tot_t, Ip_tot_t, flux_pvn_t, flux_qpar_t, flux_qperp_t, flux_kinpar_t, dE_tot_dt, &
+      Wmag_tot_t, Ip_tot_t, Ip_asymm_t, flux_pvn_t, flux_qpar_t, flux_qperp_t, flux_kinpar_t, dE_tot_dt, &
       dWmag_tot_dt, dthermal_tot_dt, dkinpar_tot_dt, dkinperp_tot_dt,  Magwork_tot_t,   &
       thmwork_tot_t, viscopar_dissip_tot_t, viscopar_flux_t, li3_t, friction_dissip_tot_t,     &
       li3_tot_t, part_src_tot_t, heat_src_tot_t, volume_t, area_t, mag_ener_src_tot, eta_ohmic, eta, &
@@ -819,7 +822,8 @@ module live_data
     write(LIVE_DATA_HANDLE,'(A,6ES17.9)') '@Xpoint_up: ', xtime(index), R_xpoint_t(index,2), Z_xpoint_t(index,2), Psi_xpoint_t(index,2)
     write(LIVE_DATA_HANDLE,'(A,6ES17.9)') '@bnd_point: ', xtime(index), R_bnd_t(index), Z_bnd_t(index), Psi_bnd_t(index)
 
-    write(LIVE_DATA_HANDLE,'(A,5ES17.9)') '@current: ', xtime(index), Ip_tot_t(index), current_t(index), Ip_tot_t(index)-current_t(index)
+    write(LIVE_DATA_HANDLE,'(A,5ES17.9)') '@current: ', xtime(index), Ip_tot_t(index),  current_t(index), Ip_tot_t(index)-current_t(index)
+    write(LIVE_DATA_HANDLE,'(A,5ES17.9)') '@ip_asymm: ', Ip_asymm_t(index)
     write(LIVE_DATA_HANDLE,'(A,5ES17.9)') '@betas: ', xtime(index), beta_p_t(index), beta_t_t(index), beta_n_t(index)
     write(LIVE_DATA_HANDLE,'(A,5ES17.9)') '@particlecontent: ', xtime(index),density_tot_t(index), density_in_t(index), density_out_t(index), &
                                                                 npart_tot_t(index)

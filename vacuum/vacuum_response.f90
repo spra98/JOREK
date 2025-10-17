@@ -813,6 +813,7 @@ module vacuum_response
     end if
     if (halo_freeb) then
       if (CARIDDI_mode)  call read_array_par(filehandle, 'FwtFw_inv', (/sr%n_electrode_w-1, sr%n_electrode_w-1/), disp, my_id, sr%fwtfw_inv, .true.)
+      if (CARIDDI_mode)  call read_array_par(filehandle, 'W_h', (/sr%nd_bez, sr%n_electrode_w-1/) , disp, my_id, sr%w_h,  .true.  )
       if (my_id == 0 .and. CARIDDI_mode) then ! use read_array_not_distr ?
         call read_array_not_distr(filehandle, 'ielsphi_w', (/sr%n_pts_real_w,3/), disp, float2d=sr%ielsphi_real_w, deb=.false.)
         call read_array_not_distr(filehandle, 'ielsphi_J', (/sr%n_pts_real_J,3/), disp, float2d=sr%ielsphi_real_J, deb=.false.)
@@ -3285,6 +3286,8 @@ module vacuum_response
     logical :: update_required
     integer :: ierr,loc_size,ntasks
     real*8  :: test_sum,test_sum2
+    real*8  :: Jj_vec_tot(sr%n_electrode_J), Jj_vec(sr%n_electrode_J-1)
+    real*8,ALLOCATABLE :: diag_el_eq(:), u_h_vec(:), response_m_w_temp(:,:), Jmat_w_rank(:,:), Jmat_J_rank(:,:)
     type(t_distrib_mat)  :: response_m_d                   !< \f$\hat{D}\f$ in the documentation
     type(t_distrib_mat)  :: response_m_a                   !< \f$\hat{A}\f$ in the documentation
     type(t_distrib_mat)  :: response_m_d_i                 !< \f$\hat{D_i}\f$ in the documentation
@@ -3321,7 +3324,10 @@ module vacuum_response
                  .or. ( .not. allocated(response_d_c_i)       ) &
                  .or. ( .not. allocated(response_m_e_i)        ) &
                  .or. ( .not. allocated(response_m_h)         ) &
-                 .or. ( .not. allocated(response_m_j_i)         )
+                 .or. ( .not. allocated(response_m_j_i)         ) &
+                 .or. ( .not. allocated(response_m_w_h))          &
+                 .or. ( .not. allocated(response_m_u_h))          &
+                 .or. ( .not. allocated(response_m_t_h))
     else
       update_required = ( old_res     /= wall_resistivity       ) &
                  .or. ( old_tstep   /= tstep                  ) &
@@ -3382,9 +3388,6 @@ module vacuum_response
           response_d_b_i(:) = - tstep * wall_resistivity * sr%dii_yy / tmp_d_sii(:)
           response_d_c_i(:) = zeta / tmp_d_sii(:)
 
-          !response_d_b(:)   = 0.d0
-          !response_d_c(:)   = 0.d0
-
           ! N.B. Change of sign compared to eddy-only coupl. is performed after reading, the Ci_star in CARIDDI already contains "-"
           do j = 1, size(response_m_a_i%loc_mat,2) 
             response_m_a_i%loc_mat(:,j) = -(1.d0+zeta) * sr%a_yie%loc_mat(:,j) / tmp_d_sii(:)
@@ -3410,6 +3413,25 @@ module vacuum_response
           call MPI_AllREDUCE(MPI_IN_PLACE,response_m_j_i,size(response_m_j_i),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
           call  dealloc_distr(response_m_a_i)
           call  dealloc_distr(response_m_d_i)
+          
+          ! --- m_w_h = a_eye * fwtfw^-1 * J_w
+          if (.not. allocated(Jmat_w_rank)) allocate(Jmat_w_rank(sr%n_electrode_w-1,sr%nd_bez) )
+          Jmat_w_rank = sr%Jmat_w(1:sr%n_electrode_w-1,:)
+          call matrix_multiplication(my_id, sr%w_h, mat2_not_distr=Jmat_w_rank, res_mat_not_distr=response_m_w_h)
+          call MPI_AllREDUCE(MPI_IN_PLACE,response_m_w_h,size(response_m_w_h),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
+          
+          ! Minus sign as the wall-impinging current is considered with opposite normal
+          response_m_w_h = -response_m_w_h
+
+          ! --- m_u_h = - ael_eq * J_j
+          if (.not. allocated(Jmat_J_rank)) allocate(Jmat_J_rank(sr%n_electrode_J-1,sr%nd_bez) )
+          Jmat_J_rank = sr%Jmat_J(1:sr%n_electrode_J-1,:)
+          call matrix_multiplication(my_id, sr%aeq_el, mat2_not_distr=Jmat_J_rank, res_mat_not_distr=response_m_u_h)
+          call MPI_AllREDUCE(MPI_IN_PLACE,response_m_u_h,size(response_m_u_h),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)          
+          response_m_u_h = -response_m_u_h
+
+          if (.not. ALLOCATED(response_m_t_h)) allocate(response_m_t_h(sr%nd_bez, sr%nd_bez))
+          response_m_t_h(:,:) = response_m_w_h(:,:) + response_m_u_h(:,:)
           
           deallocate( tmp_d_sii)
 

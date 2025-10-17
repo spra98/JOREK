@@ -135,6 +135,7 @@ subroutine boundary_check(my_id)
       ! B_par_v_eddy(:) = 0.d0
       ! B_par_v_halo(:) = 0.d0
       
+      if (.not. ALLOCATED(I_elec_J)) allocate(I_elec_J(sr%n_electrode_J-1))
       ! --- Select one STARWALL harmonic
 !$omp parallel do                                                                                  &
 !$omp   schedule(dynamic)                                                                          &

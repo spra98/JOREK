@@ -109,7 +109,7 @@ real*8  :: I_halo, TPF, q02, q95, q99
 real*8, allocatable :: qval(:), radav(:)
 
 real*8  :: R_axis,Z_axis,s_axis,t_axis
-real*8  :: current_tot, current_tot_p(n_plane), beta_p, beta_n, beta_t, aminor, current_MA, current_p_MA(n_plane), current_R_tot
+real*8  :: current_tot, offset_Ip, max_Ip_asymm, current_tot_p(n_plane), beta_p, beta_n, beta_t, aminor, current_MA, current_p_MA(n_plane), current_R_tot
 real*8  :: xjac, xjac_R, xjac_Z, BigR, wst, P_int, P_e_int, P_i_int, C_intern, zj0, ps0, r0, T0, Te0, Ti0
 real*8  :: Vol, Volume, Area, Bgeo, area1, surface_area 
 real*8  :: psi_as_coord
@@ -1450,7 +1450,7 @@ aux_q0    = 0.d0; aux_jx0   = 0.d0; aux_jy0   = 0.d0; aux_jz0   = 0.d0; aux_jz0_
           *(0.5d0*T_min_neg * ( 1+exp( (min(T0,T_min_neg)-T_min_neg)/(0.5d0*T_min_neg) )) -min(T0,T_min_neg))
 #endif /* WITH_TiTe */
           C_intern = C_intern - zj0 /BigR * xjac *        wst * delta_phi    ! 2D integral
-          C_intern_p(mp) = C_intern_p(mp) - zj0 /BigR * xjac *        wst * delta_phi    ! 2D integral
+          C_intern_p(mp) = C_intern_p(mp) - zj0 /BigR * xjac *        wst    ! 2D integral for Ip-asymmetry
           C_intern_3d = C_intern_3d - zj0 * xjac * wst * delta_phi ! 3D integral
           C_intern_p_3d(mp) = C_intern_p_3d(mp) - zj0 * xjac * wst * delta_phi ! 3D integral
           area1    = area1    +  xjac * wst * delta_phi         
@@ -1509,7 +1509,7 @@ aux_q0    = 0.d0; aux_jx0   = 0.d0; aux_jy0   = 0.d0; aux_jz0   = 0.d0; aux_jz0_
                *(0.5d0*T_min_neg * (1 + exp( (min(T0,T_min_neg)-T_min_neg)/(0.5d0*T_min_neg) ) ) -min(T0,T_min_neg))
 #endif /* WITH_TiTe */
           C_ext = C_ext - zj0 / BigR * xjac *        wst * delta_phi  ! 2D integral
-          C_ext_p(mp) = C_ext_p(mp) - zj0 / BigR * xjac *        wst * delta_phi  ! 2D integral
+          C_ext_p(mp) = C_ext_p(mp) - zj0 / BigR * xjac *        wst   ! 2D integral for Ip asymmetry
           C_ext_3d = C_ext_3d - zj0 * xjac * wst * delta_phi
           C_ext_p_3d(mp) = C_ext_p_3d(mp) - zj0 * xjac * wst * delta_phi
           H_ext = H_ext + heat_source     * xjac * BigR * wst * delta_phi
@@ -2479,6 +2479,11 @@ if (my_id .eq. 0) then
   close(32)
 endif
 
+! ============== PLASMA CURRENT ASYMMETRY =================================
+
+offset_Ip = sum(current_tot_p) / real(n_plane)
+max_Ip_asymm = maxval(abs(current_tot_p(:) - offset_Ip))
+
 ! --- Externally calculated quantities
 ! --- Halo currents
 #ifdef fullmhd   
@@ -2979,6 +2984,7 @@ if (my_id .eq. 0) then
     Thermal_i_tot_t(index_now)       = pressure_i
     Helicity_tot_t(index_now)        = helicity_tot
     Ip_tot_t(index_now)              = current_tot 
+    Ip_asymm_t(index_now)            = max_Ip_asymm
     current_t(index_now)             = current_in 
     Kin_par_tot_t(index_now)         = kin_par_tot
     Kin_perp_tot_t(index_now)        = kin_perp_tot 

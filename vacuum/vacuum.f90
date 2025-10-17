@@ -55,6 +55,9 @@ module vacuum
   real*8, allocatable  :: response_m_h(:,:)              !< \f$\hat{H}\f$ in the documentation
   real*8, allocatable  :: response_m_j(:,:)              !< \f$\hat{J}\f$ in the documentation
   real*8, allocatable  :: response_m_j_i(:,:)            !< \f$\hat{J_i}\f$ in the documentation
+  real*8, allocatable  :: response_m_w_h(:,:)
+  real*8, allocatable  :: response_m_u_h(:,:)
+  real*8, allocatable  :: response_m_t_h(:,:)
   real*8, allocatable  :: response_m_eq(:,:)             !< Response matrix for vacuum_equil
 
   !> @name Equilibrium coil contributions
@@ -166,6 +169,7 @@ module vacuum
     type(t_distrib_mat)  :: a_eyi
     type(t_distrib_mat)  :: a_eye
     type(t_distrib_mat)  :: fwtfw_inv
+    type(t_distrib_mat)  :: w_h  ! Matrix M_eye * inv(FwtFw) for time-stepping
     real*8, allocatable  :: ielsphi_real_w(:,:)
     real*8, allocatable  :: ielsphi_real_J(:,:)
     ! Electrode mapping Matrices in real space
@@ -1395,7 +1399,7 @@ module vacuum
   real*8, allocatable   :: H1_CAR(:,:,:), H1_CAR_s(:,:,:), HZ_CAR(:,:)
   real*8, allocatable   :: I_elec_J_complete(:), I_elec_w_complete(:)
 
-  write(*,*) 'Inside get_Ielec_halo'
+  if (my_id .eq. 0) write(*,*) 'Inside get_Ielec_halo'
 
 
   ! Reconvert for debugging?
@@ -1671,6 +1675,7 @@ module vacuum
     enddo  
     vec_inside = (/ R_c - R(2), Z_c - Z(2) /)       ! vector pointing towards the domain
     grad_t     = (/ -Z_s(2) , R_s(2) /)     ! gradient of the coordinate t (normal to the boundary here)
+    ! grad_t could point either outwards or inwards depending on the orientation of the bnd_element!
     sign_out   = -1.d0 * sign( 1.d0, ( vec_inside(1)*grad_t(1) + vec_inside(2)*grad_t(2) ) )  
     !--------------------------------------------------------------------------------
     select case (mapping)
@@ -1955,7 +1960,7 @@ module vacuum
 
       endif ! reconvert2real
   end select
-  write(*,*) 'Finished get_Ielec_halo'
+  if (my_id .eq. 0) write(*,*) 'Finished get_Ielec_halo'
   end subroutine get_Ielec_halo
  
   subroutine fourier(A, nctrl, ntor_f, nsub_ctrl, ndim, phi_ctrl,mapping, global ,my_id, node_list, element_list)
@@ -2033,7 +2038,7 @@ module vacuum
     
   !  write(*,*) ' itor_J = ', itor_J, ', itor = ', itor, ', is_c = ', is_c, ', nharm(itor) = ', nharm(itor)
 
-    do jphi = 1, ntor_f   ! poloidal planes 
+    do jphi = 1, ntor_f   ! toroidal slices 
        phi     =  phi_ctrl(jphi)
        i_start = (jphi-1)*npol + 1
        i_end   =  jphi   *npol
