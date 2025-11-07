@@ -709,6 +709,7 @@ write(*,'(1x,a)',advance='no') ' USE_CATALYST : '
   if ( freeboundary ) then
     write(*,LOGI_FMT) 'CARIDDI_mode          ', CARIDDI_mode
     write(*, LOGI_FMT) 'halo_freeb           ', halo_freeb
+    write(*, LOGI_FMT) 'halo_imp             ', halo_imp
     write(*,LOGI_FMT) 'freeboundary_equil    ', freeboundary_equil
     write(*,LOGI_FMT) 'freeb_change_indices  ', freeb_change_indices
     write(*,LOGI_FMT) 'vacuum_min            ', vacuum_min

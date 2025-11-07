@@ -14,6 +14,7 @@ module vacuum
   integer             :: n_dof_starwall                  !< Total number of boundary dofs in STARWALL response
   logical             :: CARIDDI_mode                    !< CARIDDI or STARWALL
   logical             :: halo_freeb                      !< Switch on halo current coupling with walls.
+  logical             :: halo_imp                        !< Establish implicit time stepping for halos
   logical             :: vacuum_min                      !< Mode to minimalize memory consumption
   
   !> @name Resistive wall only
@@ -460,6 +461,7 @@ module vacuum
     ! --- Preset namelist input parameters.
     CARIDDI_mode         = .false.            !< True if CARIDDI input file
     halo_freeb           = .false.
+    halo_imp             = .false.
     vacuum_min           = .false.
     freeboundary_equil   = .false.
     starwall_equil_coils = .false.
@@ -1990,7 +1992,7 @@ module vacuum
 
     do i = 1, sr%n_tor
        call calc_fourier_coeff_single(A,  ntor_f, npol, i, ndim, phi_ctrl, fourier_coeff,my_id)
-       call realspace2bezier(bez, fourier_coeff, ndim, nsub_ctrl, mapping, node_list, element_list)
+       call realspace2bezier(bez, fourier_coeff, ndim, nsub_ctrl, mapping, node_list, element_list, my_id)
        do inode = 1, node_list%n_bnd_nodes
           do i_order=1,2
              ind  = global_JOREK_index(node_list,inode, i_order, i, sr%n_tor)
@@ -2055,7 +2057,7 @@ module vacuum
   end subroutine calc_fourier_coeff_single
 
 
-  subroutine realspace2bezier(bez, f, ndim, nsub, mapping, node_list, element_list)
+  subroutine realspace2bezier(bez, f, ndim, nsub, mapping, node_list, element_list, my_id)
   use data_structure
   use mod_basisfunctions
   use gauss,          only: n_gauss, xgauss, wgauss
@@ -2063,6 +2065,7 @@ module vacuum
     integer, intent(in)  :: ndim        !< Second Dimension of function f
     real*8 , intent(in)  :: f(:,:)      !< function (Bfield) to be projected on Bezier basis (nsub*nelements:ndim)
     character(len=*),             intent(in)    :: mapping  
+    integer, intent(in)   ::  my_id           !< MPI rank
     real*8 , intent(out), allocatable :: bez(:,:)    !< Bezier coefficients
     type (type_bnd_node_list),        intent(in)    :: node_list
     type (type_bnd_element_list),     intent(in)    :: element_list
@@ -2100,7 +2103,7 @@ module vacuum
     
     select case (mapping)
      case ('equidistant')
-        write(*,*) 'realspace2bezier: Using equistant points'
+        if (my_id .eq. 0) write(*,*) 'realspace2bezier: Using equistant points'
         if (ALLOCATED(x)) deallocate(x)
         if (ALLOCATED(w)) deallocate(w)
         if (ALLOCATED(H_g)) deallocate(H_g)
@@ -2114,7 +2117,7 @@ module vacuum
         H_g(j,:,:) = H                        ! basis function at Gaussian points       
       end do
     case ('gauss')
-        write(*,*) 'realspace2bezier: Using Gauss points'
+        if (my_id .eq. 0) write(*,*) 'realspace2bezier: Using Gauss points'
         if (ALLOCATED(x)) deallocate(x)
         if (ALLOCATED(w)) deallocate(w)
         if (ALLOCATED(H_g)) deallocate(H_g)

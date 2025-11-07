@@ -2032,16 +2032,18 @@ module vacuum_response
   !! The magnetic field parallel to the interface (boundary of JOREK computational domain) is
   !! expressed by the STARWALL vacuum response in terms of the poloidal magnetic field at the
   !! interface (ideal and resistive wall) and the wall currents (resistive wall).
-  subroutine vacuum_boundary_integral(my_id, bnd_node_list, node_list,bnd_elm_list ,              &
+  subroutine vacuum_boundary_integral(my_id, bnd_node_list, node_list,bnd_elm_list, element_list,             &
     freeboundary_equil, resistive_wall, index_min, index_max, rhs_loc, tstep, index_now, a_mat)
 
-    use data_structure, only: type_node_list, type_element_list, type_bnd_node_list,type_bnd_element_list, type_bnd_element, type_SP_MATRIX
-    use mod_parameters, only: n_plane, n_var, n_tor
+    use data_structure, only: type_node_list, type_node, type_element_list, type_element, type_bnd_node_list,type_bnd_element_list, type_bnd_element, type_SP_MATRIX
+    use mod_parameters, only: n_plane, n_var, n_tor, n_degrees
     use gauss,          only: n_gauss, xgauss, wgauss
     use global_distributed_matrix, only: det_row_col, det_sparse_pos
     use basis_at_gaussian, only: H1, H1_s, HZ
-    use phys_module, only: t_now, t_start
+    use mod_basisfunctions
+    use phys_module, only: t_now, t_start, PI, n_period, F0
     use mpi_mod
+    use mod_settings
     use mod_integer_types
 
     implicit none
@@ -2051,6 +2053,7 @@ module vacuum_response
     type(type_node_list),               intent(in)    :: node_list            !< List of grid nodes
     type(type_bnd_node_list),           intent(in)    :: bnd_node_list        !< List of boundary grid nodes
     type(type_bnd_element_list),        intent(in)    :: bnd_elm_list         !< List of boundary elements
+    type(type_element_list),            intent(in)    :: element_list
     logical,                            intent(in)    :: freeboundary_equil   !< Use free boundary equilibrium?
     logical,                            intent(in)    :: resistive_wall       !< Resistive or ideal wall?
     integer,                            intent(in)    :: index_min, index_max !< Responsibility of MPI proc
@@ -2064,16 +2067,17 @@ module vacuum_response
     real*8, allocatable :: dpsibnd_vec(:)   ! Vector of the values of deltaPsi at the boundary
     real*8, allocatable :: psibnd_coils(:)  ! Vector of the values of Psi_coil at the boundary
     real*8   :: amat_contrib, rhs_contrib   ! Vacuum response contribution to lhs and rhs
+    real*8   :: amat_contrib_psi, amat_contrib_zj
     real*8   :: testfunc_l                  ! j^*_l in documentation
     real*8   :: basfunc_i                   ! b_i in documentation
     real*8   :: dA                          ! factor from definition of dA
     real*8   :: x_s(n_gauss), y_s(n_gauss)  ! values of dR/ds and dZ/ds at Gaussian points
     real*8   :: common_prefactor
-    integer  :: m_bndelem                   ! Boundary element index
-    type(type_bnd_element) :: bndelem_m     ! Boundary element corresponding to index m_bndelem
+    integer  :: m_bndelem, j_bndelem, s_bndelem                   ! Boundary element index
+    type(type_bnd_element) :: bndelem_m, bndelem_j     ! Boundary element corresponding to index m_bndelem
     integer  :: ms                          ! Gauss point index
     integer  :: m_plane                     ! Toroidal plane index
-    integer  :: sparsepos_jp, sparsepos_pp  ! Position of lhs contribution in the sparse matrix
+    integer  :: sparsepos_jp, sparsepos_pp, sparsepos_jj  ! Position of lhs contribution in the sparse matrix
     integer  :: blockpos_jp, blockpos_pp    ! Position of respective block in sparse matrix
     !   --- Test function related quantities
     integer  :: l_vertex, l_dof, l_dir, l_node, l_node_bnd, l_index, l_tor, l_row_j, l_row_psi
@@ -2082,11 +2086,22 @@ module vacuum_response
     integer  :: i_vertex, i_dof, i_dir, i_node, i_node_bnd, i_index, i_starwall, i_tor, i_resp, i_resp_0
     real*8   :: i_size
     !   --- Quantities related to the boundary dof contributing to the response
-    integer  :: j_dof, j_dir, j_node, j_node_bnd, j_index, j_starwall, j_tor, j_col_psi, j_resp
+    integer  :: j_dof, j_dir, j_node, s_node, j_node_bnd, j_index, j_starwall, j_tor, j_col_psi, j_col_zj, j_resp, j_vertex
+    integer  :: s_vertex, s_dof, s_dir, s_tor
+    real*8   :: s_size, j_size
 
     integer  :: i_resp_old
 
     integer  :: i_start_pf, i_end_pf     ! Indices for PF coils
+    integer  :: npts_tot, jj , mp, npol,j
+    real*8, allocatable :: identity_mat(:,:), real2bez(:,:)
+    real*8   :: phi_vec(n_plane)
+    real*8   :: sign_out, R_c, Z_c, R(n_gauss), Z(n_gauss), R_s(n_gauss), Z_s(n_gauss), vec_inside(2), grad_t(2), G(4, n_degrees), orientations(bnd_elm_list%n_bnd_elements)
+    real*8   :: psi_s(n_gauss*n_plane), zj(n_gauss*n_plane), czj, cpsi
+    real*8, allocatable :: R_zj(:), R_psis(:), J_normal(:), jn_bez(:)
+    type(type_bnd_element) :: bndelem_s
+    type(type_element)     :: elem_s    
+    type(type_node)        :: node_k, node_s
    
 #ifdef __GFORTRAN__
     real*8 :: wgauss_copy(4)
@@ -2152,19 +2167,25 @@ module vacuum_response
         !> corresponds to matrix G_i in documentation
         call extended_matrix_vector(my_id,  1.0d0, sr%a_eyi, response_d_c_i, &
             dwall_curr_i(:), .true., rhs_contrib_arr, .false.)
-        !> corresponds to matrix V_i in documentation
-        call extended_matrix_vector(my_id, -1.0d0, sr%a_eyi, response_d_b_i, &
-            Yi_coils0(:), .true., rhs_contrib_arr, .false.)
-        !> corresponds to matrix F_e in documentation
-        if (.not. allocated(diag_e) ) allocate(diag_e(n_wall_curr_e))
-        diag_e(:) = 1.d0
-        call extended_matrix_vector(my_id, 1.d0, sr%a_eye, diag_e, &
-              wall_curr_e(:), .true., rhs_contrib_arr, .false.)
-        !> corresponds to matrix Qel_eq
-        if (.not. allocated(diag_el_eq) ) allocate(diag_el_eq(sr%n_electrode_J-1))
-        diag_el_eq(:) = 1.d0
-        call extended_matrix_vector(my_id, -1.d0, sr%aeq_el, diag_el_eq, &
-              I_elec_J(:), .TRUE., rhs_contrib_arr, .true.)
+        if (.not. halo_imp) then
+          !> corresponds to matrix V_i in documentation
+          call extended_matrix_vector(my_id, -1.0d0, sr%a_eyi, response_d_b_i, &
+              Yi_coils0(:), .true., rhs_contrib_arr, .false.)
+          !> corresponds to matrix F_e in documentation
+          if (.not. allocated(diag_e) ) allocate(diag_e(n_wall_curr_e))
+          diag_e(:) = 1.d0
+          call extended_matrix_vector(my_id, 1.d0, sr%a_eye, diag_e, &
+                wall_curr_e(:), .true., rhs_contrib_arr, .false.)
+          !> corresponds to matrix Qel_eq
+          if (.not. allocated(diag_el_eq) ) allocate(diag_el_eq(sr%n_electrode_J-1))
+          diag_el_eq(:) = 1.d0
+          call extended_matrix_vector(my_id, -1.d0, sr%aeq_el, diag_el_eq, &
+                I_elec_J(:), .TRUE., rhs_contrib_arr, .true.)
+        else
+          !> corresponds to matrix V_i in documentation
+          call extended_matrix_vector(my_id, -1.0d0, sr%a_eyi, response_d_b_i, &
+              Yi_coils0(:), .true., rhs_contrib_arr, .true.)
+        endif          
       else
       ! ===============================  Btan (eddy) ===================================== 
 
@@ -2179,24 +2200,32 @@ module vacuum_response
         !> corresponds to matrix V in documentation
         call extended_matrix_vector(my_id, -1.0d0, sr%a_ey, response_d_b, &
             Y_coils0(:), .true., rhs_contrib_arr, .true.)
-       if (my_id .eq. 0) then
-                  OPEN(UNIT=12, FILE="rhs_c_eddy_0.dat", ACTION="write", STATUS="replace")
-      DO i=1,n_dof_starwall
-        WRITE(12,*) rhs_contrib_arr(i)
-      END DO
-      CLOSE(12)
-      endif
-       if (my_id .eq. 1) then
-                  OPEN(UNIT=12, FILE="rhs_c_eddy_1.dat", ACTION="write", STATUS="replace")
-      DO i=1,n_dof_starwall
-        WRITE(12,*) rhs_contrib_arr(i)
-      END DO
-      CLOSE(12)
-      endif
 
       endif
 
     end if
+
+    ! Writing transformation matrix real-space -> Bezier
+    Npts_tot = n_gauss * n_plane * bnd_elm_list%n_bnd_elements
+
+    if (.not. ALLOCATED(R_psis)) allocate(R_psis(npts_tot))
+    if (.not. ALLOCATED(R_zj)) allocate(R_zj(npts_tot))
+    if (.not. ALLOCATED(J_normal)) allocate(J_normal(npts_tot))
+    if (.not. ALLOCATED(jn_bez)) allocate(jn_bez(n_dof_starwall))
+
+    npol     = npts_tot / n_plane
+    if (.not. allocated(identity_mat)) allocate(identity_mat(Npts_tot, Npts_tot))
+
+    identity_mat = 0.d0
+    do jj = 1 , Npts_tot
+      identity_mat(jj,jj) = 1.d0
+    end do
+
+    do mp = 1, n_plane
+      phi_vec   (mp)      = 2.d0*PI*float(mp-1)/float(n_plane) / float(n_period)
+    enddo
+    ! N.B. Real2Bez WILL BE ALLOCATED BASED ON THE NUMBER OF FREE BOUNDARY MODES IN STARWALL!    
+    call fourier(identity_mat, Npts_tot, n_plane, n_gauss, Npts_tot, phi_vec, 'gauss', Real2Bez, my_id, bnd_node_list, bnd_elm_list)
 
 #ifdef __GFORTRAN__
     wgauss_copy(1:4) = wgauss(1:4)
@@ -2204,20 +2233,21 @@ module vacuum_response
     ! --- Sum over boundary elements
     !$omp parallel do                                                                                         &
     !$omp default(none)                                                                                       &    
-    !$omp shared(my_id, a_mat, rhs_loc, bnd_elm_list, bnd_node_list, node_list, index_min, index_max,          &
-    !$omp   response_m_e, response_m_e_i, response_m_h, response_m_j, response_m_j_i, H1, HZ, sr,              &
+    !$omp shared(my_id, a_mat, rhs_loc, bnd_elm_list, element_list, bnd_node_list, node_list, index_min, index_max,          &
+    !$omp   response_m_e, response_m_e_i, response_m_h, response_m_j, response_m_j_i, response_m_t_h, H1, H1_s, HZ, sr,              &
     !$omp   bext_tan, I_coils, wall_curr, dwall_curr, psibnd_vec, dpsibnd_vec,psibnd_coils,                   &
-    !$omp  wall_curr_i, dwall_curr_i, wall_curr_e, dwall_curr_e,                                              &
+    !$omp  wall_curr_i, dwall_curr_i, wall_curr_e, dwall_curr_e, halo_imp, F0, real2bez,                      &
 #ifdef __GFORTRAN__
     !$omp   wgauss_copy,                                                                                      &
 #endif
     !$omp   starwall_equil_coils,  Y_coils0, Yi_coils0, rhs_contrib_arr, resistive_wall, CARIDDI_mode, halo_freeb) &
-    !$omp private(m_bndelem, bndelem_m, x_s, y_s, l_vertex, l_dof, l_node,l_dir, l_node_bnd,                  &
-    !$omp   l_index, l_size, l_tor, l_row_j, l_row_psi, ms, dA, m_plane,common_prefactor,                     &
-    !$omp   testfunc_l, i_vertex, i_dof, i_node, i_dir, i_node_bnd, i_index, i_size, i_starwall,              &
-    !$omp   i_tor, i_resp, i_resp_old, i_resp_0, basfunc_i, j_node_bnd, j_dof, j_node, j_dir,                 &
-    !$omp   j_index, j_starwall, j_tor, j_resp, j_col_psi, sparsepos_jp, sparsepos_pp,                        &
-    !$omp   amat_contrib, rhs_contrib, blockpos_jp, blockpos_pp, ierr     )                                   &
+    !$omp private(m_bndelem, j_bndelem, s_bndelem, bndelem_m, elem_s, bndelem_s, node_k, node_s, bndelem_j, x_s, y_s, l_vertex, l_dof, l_node,l_dir, l_node_bnd,                  &
+    !$omp   l_index, l_size, l_tor, l_row_j, l_row_psi, ms, dA, m_plane,common_prefactor, s_vertex, s_dof,                   &
+    !$omp   testfunc_l, i_vertex, i_dof, i_node, i_dir, s_dir, i_node_bnd, i_index, i_size, s_size, i_starwall,              &
+    !$omp   npol, npts_tot, vec_inside, grad_t, sign_out, R_c, Z_c, R,Z,R_s,Z_s, G, orientations,  psi_s, zj, R_zj, R_psis, J_normal, jn_bez, czj, cpsi,  &
+    !$omp   i_tor, i_resp, i_resp_old, i_resp_0, basfunc_i, j_node_bnd, j_dof, j_size, j_vertex, i,j,jj, j_node, s_node, j_dir,     &
+    !$omp   j_index, j_starwall, j_tor, s_tor, j_resp, j_col_psi, j_col_zj, sparsepos_jp, sparsepos_pp, sparsepos_jj,                        &
+    !$omp   amat_contrib, rhs_contrib, amat_contrib_psi, amat_contrib_zj, blockpos_jp, blockpos_pp, ierr )                                   &
     !$omp schedule(dynamic,1) collapse(4)
     L_MB: do m_bndelem = 1, bnd_elm_list%n_bnd_elements
 
@@ -2302,55 +2332,205 @@ module vacuum_response
 
                   ! --- Sum over boundary dofs contributing to the response
                   L_JB: do j_node_bnd = 1, bnd_node_list%n_bnd_nodes ! (loop over boundary nodes)
-
+                    
+                    ! Index of the node in the node list
                     j_node      = bnd_node_list%bnd_node(j_node_bnd)%index_jorek
+                    
+                    if (halo_imp) then
+                    !if (my_id .eq. 0) write(*,*) 'Halo implicit, searching for bnd node index'
+                      ! Find boundary element to which the boundary node belongs and determine 
+                      ! if the index of the node is 1 or 2
+                      do j_bndelem = 1,bnd_elm_list%n_bnd_elements
+                        bndelem_j = bnd_elm_list%bnd_element(j_bndelem)
+                        do jj =1,2
+                          if (bndelem_j%vertex(jj) .eq. j_node ) then 
+                            j_vertex = jj 
+                          endif
+                        enddo
+                      enddo
+                    endif
 
                     L_JD: do j_dof = 1, 2 ! (loop over node dofs)
 
                       j_dir       = bnd_node_list%bnd_node(j_node_bnd)%direction(j_dof)
                       j_index     = node_list%node(j_node)%index(j_dir)
-
+                      if (halo_imp) j_size      = bndelem_m%size(j_vertex, j_dof)
                       L_JS: do j_starwall = 1, sr%n_tor ! (loop over STARWALL harmonics)
-
+                      
                         j_tor  = sr%i_tor(j_starwall)
-                  
+                    
                         if ( (j_tor < a_mat%i_tor_min) .or. (j_tor > a_mat%i_tor_max) ) cycle    
 
                         j_resp   = (bnd_node_list%bnd_node(j_node_bnd)%index_starwall(1) - 1)*sr%n_tor0 &
                                  + bnd_node_list%bnd_node(j_node_bnd)%n_dof*(j_starwall-1)              &
                                  + bnd_node_list%bnd_node(j_node_bnd)%index_starwall(j_dof)             &
                                  - bnd_node_list%bnd_node(j_node_bnd)%index_starwall(1) + 1
+                        
+                        ! Creating real space S_psi and S_zj arrays of dimension npts_tot
+                        if (halo_imp) then
+                        !if (my_id .eq. 0) write(*,*) 'Halo implicit, calculating coefficients'
 
+                          R_zj = 0.d0
+                          R_psis = 0.d0
+                          J_normal = 0.d0
+                          do s_bndelem = 1,bnd_elm_list%n_bnd_elements
+                            bndelem_s = bnd_elm_list%bnd_element(s_bndelem)
+                            elem_s    = element_list%element(bndelem_s%element)
 
+                            psi_s = 0.d0
+                            zj    = 0.d0
+                            R     = 0.d0
+                            Z     = 0.d0
+                            R_s   = 0.d0
+                            Z_s   = 0.d0
+
+                            do s_vertex = 1, 2 ! (loop over nodes in element s_bndelem)
+                              do s_dof = 1, 2 ! (loop over node dofs)
+                                s_node      = bndelem_s%vertex(s_vertex)
+                                node_s      = node_list%node(s_node)
+                                s_dir       = bndelem_m%direction(l_vertex,s_dof)
+                                s_size      = bndelem_m%size(s_vertex,s_dof)
+                                
+                                R  (:)   = R  (:)  + node_s%x(1,s_dir,1) * s_size * H1  (s_vertex,s_dof,:)
+                                Z  (:)   = Z  (:)  + node_s%x(1,s_dir,1) * s_size * H1  (s_vertex,s_dof,:)
+                                R_s(:)   = R_s(:)  + node_s%x(1,s_dir,1) * s_size * H1_s(s_vertex,s_dof,:)
+                                Z_s(:)   = Z_s(:)  + node_s%x(1,s_dir,2) * s_size * H1_s(s_vertex,s_dof,:)
+
+                                do mp=1,n_plane
+                                  do s_tor = 1, sr%n_tor ! (loop over toroidal harmonics)
+                                    ! Chunks of size n_gauss * n_plane
+                                    psi_s((mp-1)*n_gauss+1:mp*n_gauss) =    psi_s((mp-1)*n_gauss+1:mp*n_gauss) + &
+                                    node_s%values(sr%i_tor(s_tor),s_dir,var_psi) * s_size*H1_s(s_vertex,s_dof,:) * HZ(sr%i_tor(s_tor),mp)
+
+                                    zj((mp-1)*n_gauss+1:mp*n_gauss)    =    zj((mp-1)*n_gauss+1:mp*n_gauss) + &
+                                    node_s%values(sr%i_tor(s_tor),s_dir,var_zj) * s_size*H1(s_vertex,s_dof,:) * HZ(sr%i_tor(s_tor),mp)
+                                  enddo            
+                                enddo
+
+                              enddo
+                            enddo
+
+                            ! do mp = 1,n_plane ! Fill up first going along the poloidal angle and then proceeding to next poloidal plane (along phi)
+
+                            !   S_psi( (s_bndelem-1)*n_gauss+1+(mp-1)*npol : s_bndelem*n_gauss+(mp-1)*npol ) = psi_s((mp-1)*n_gauss+1:mp*n_gauss)                          
+                            !   S_zj( (s_bndelem-1)*n_gauss+1+(mp-1)*npol : s_bndelem*n_gauss+(mp-1)*npol ) = zj((mp-1)*n_gauss+1:mp*n_gauss)                          
+
+                            ! enddo
+                            ! Stack spatial coordinates along poloidal plane
+                            ! R_pol((s_bndelem-1)*n_gauss+1: s_bndelem*n_gauss) = R(:)
+                            ! R_s_pol((s_bndelem-1)*n_gauss+1: s_bndelem*n_gauss) = R_s(:)
+                            ! Z_s_pol((s_bndelem-1)*n_gauss+1: s_bndelem*n_gauss) = Z_s(:)
+                            
+                            !---------------------- BOUNDARY ELEMENT ORIENTATION-------------------------- 
+                            ! --- Calculate an inside point on the element to then calculate the
+                            ! direction of bnd normals
+
+                            vec_inside(2) = 0.d0
+                            grad_t(2)     = 0.d0
+                            sign_out   = 0.d0
+
+                            call basisfunctions(xgauss(2),xgauss(2), G)  
+                            R_c = 0.d0 ;  Z_c = 0.d0 
+                            do i = 1, n_vertex_max
+                              do j = 1, n_degrees
+                                node_k = node_list%node(elem_s%vertex(i)) 
+                                R_c    = R_c + node_k%x(1,j,1) * elem_s%size(i,j) * G(i,j)
+                                Z_c    = Z_c + node_k%x(1,j,2) * elem_s%size(i,j) * G(i,j)
+                              enddo
+                            enddo  
+                            vec_inside = (/ R_c - R(2), Z_c - Z(2) /)       ! vector pointing towards the domain
+                            !--- Find out correct sign of the normal (it has to point outwards the domain)
+                            grad_t     = (/ -Z_s(2) , R_s(2) /)     ! gradient of the coordinate t (normal to the boundary here) 
+                            ! grad_t could point either outwards or inwards depending on the orientation of the bnd_element!
+                            sign_out   = -1.d0 * sign( 1.d0, ( vec_inside(1)*grad_t(1) + vec_inside(2)*grad_t(2) ) )  ! (+1 if normal outwards)
+                            ! Save the orientation for all elements
+                            !orientations(s_bndelem) = sign_out    
+                            
+                            ! Fill D_pol for that bnd element
+                           ! D_pol((s_bndelem-1)*n_gauss+1: s_bndelem*n_gauss) = sign_out / (sqrt(R_s(:)**2.d0+Z_s(:)**2.d0)) / (F0*R(:))   
+
+                            do mp = 1, n_plane
+
+                              R_zj ((s_bndelem-1)*n_gauss+1+(mp-1)*npol : s_bndelem*n_gauss+(mp-1)*npol)  = &
+                                  psi_s((mp-1)*n_gauss+1:mp*n_gauss) &
+                                   / sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out               &
+                                   * j_size * H1(j_vertex,j_dof,:) * HZ(j_tor,mp)  ! last line = d j_real / dj_Bez
+
+                              R_psis ((s_bndelem-1)*n_gauss+1+(mp-1)*npol : s_bndelem*n_gauss+(mp-1)*npol)  = &
+                                  zj((mp-1)*n_gauss+1:mp*n_gauss) &
+                                   / sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out               &
+                                   * j_size * H1_s(j_vertex,j_dof,:) * HZ(j_tor,mp)  ! last line = d psi_s_real / dpsi_Bez
+                              
+                              J_normal ((s_bndelem-1)*n_gauss+1+(mp-1)*npol : s_bndelem*n_gauss+(mp-1)*npol) = &
+                               ((zj((mp-1)*n_gauss+1:mp*n_gauss) * psi_s((mp-1)*n_gauss+1:mp*n_gauss)) ) &
+                                                          /sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out
+
+                            enddo             
+
+                          enddo  ! END OF S_elm LOOP
+
+                          ! CALCULATE COEFFICIENTS FOR THE HALO IMPLICIT COUPLING
+                           czj = sum(real2bez(j_resp,:) * R_zj(:))
+                           cpsi = sum(real2bez(j_resp,:) * R_psis(:))
+                        !if (my_id .eq. 0) write(*,*) 'Halo implicit, done calculating coefficients'
+
+                        endif  ! END OF HALO IMPLICIT IF
+                      
 
                         ! --- Option to switch off mode coupling due to a 3D  wall
                         if ( vacuum_decouple_modes .and. (j_tor /= i_tor) ) cycle
 
                         ! --- Determine the column in the main matrix
                         j_col_psi = det_row_col(j_index, var_psi, j_tor, a_mat%i_tor_min, a_mat%i_tor_max)
+                        j_col_zj  = det_row_col(j_index, var_zj, j_tor, a_mat%i_tor_min, a_mat%i_tor_max)
 
                         ! --- Determine the position in the sparse matrix data structure
                         !     which corresponds to the matrix entry at  l_row_j, j_col_psi.
                         sparsepos_jp = det_sparse_pos(l_row_j,   j_col_psi, index_min, a_mat)
                         sparsepos_pp = det_sparse_pos(l_row_psi, j_col_psi, index_min, a_mat)
+                        sparsepos_jj = det_sparse_pos(l_row_j,   j_col_zj, index_min, a_mat)
 
                         ! --- Vacuum response contribution to the lhs of the current equation
-                        if (CARIDDI_mode .and. halo_freeb) then
+                        if (CARIDDI_mode .and. halo_freeb .and. .not. halo_imp ) then
                           amat_contrib = - common_prefactor * response_m_e_i(i_resp, j_resp)
+                        elseif (CARIDDI_mode .and. halo_freeb .and. halo_imp) then
+                          amat_contrib_psi = - common_prefactor * (response_m_e_i(i_resp,j_resp) + &
+                                           response_m_t_h(i_resp,j_resp) * cpsi)
+                          amat_contrib_zj  = - common_prefactor * response_m_t_h(i_resp,j_resp) * czj
                         else
                           amat_contrib = - common_prefactor * response_m_e(i_resp, j_resp)
                         endif
-                        !$omp atomic
-                        a_mat%val(sparsepos_jp) = a_mat%val(sparsepos_jp) + amat_contrib
+
+                        if (.not. halo_imp) then
+                          !$omp atomic
+                          a_mat%val(sparsepos_jp) = a_mat%val(sparsepos_jp) + amat_contrib
+                        else
+                          !$omp atomic
+                          a_mat%val(sparsepos_jp) = a_mat%val(sparsepos_jp) + amat_contrib_psi
+                          !$omp atomic
+                          a_mat%val(sparsepos_jj) = a_mat%val(sparsepos_jj) + amat_contrib_zj
+                        endif
 
                       end do L_JS
                     end do L_JD
                   end do L_JB
 
                   ! --- Contribution of vacuum response to the rhs of the current equation
-                  if (CARIDDI_mode .and. halo_freeb) then 
+                  if (CARIDDI_mode .and. halo_freeb .and. .not. halo_imp) then 
                     rhs_contrib = sum( response_m_h(i_resp,:) * psibnd_vec(:))                     &
                               + sum( response_m_j_i(i_resp,:) * dpsibnd_vec(:))
+                  elseif (CARIDDI_mode .and. halo_freeb .and. halo_imp) then
+                  if (my_id .eq. 0 .and. i_starwall .eq. 1 .and. i_vertex .eq. 1 .and. i_dof .eq. 1 &
+                      .and. l_vertex == 1 .and. l_dof == 1 .and. m_bndelem == 1) write(*,*) 'Calculating Jn_bez'
+
+                  ! Calculate J_normal in Bezier
+                  Jn_bez = 0.d0
+                  do jj = 1,sr%nd_bez
+                    Jn_bez(jj) = sum(real2bez(jj,:) * J_normal(:))
+                  enddo
+                    rhs_contrib = sum( response_m_h(i_resp,:) * psibnd_vec(:))                     &
+                              + sum( response_m_j_i(i_resp,:) * dpsibnd_vec(:))                    &
+                              + sum(response_m_t_h(i_resp,:) * jn_bez(:))
                   else
                   
                     rhs_contrib = sum( response_m_h(i_resp,:) * psibnd_vec(:))                     &
@@ -2374,9 +2554,9 @@ module vacuum_response
           end do L_LD
         end do L_LV
       end do L_LS
-
     end do L_MB
     !$omp end parallel do
+        if (my_id .eq. 0) write(*,*) 'End of vacuum_boundary_integral do loops'
 
     ! --- timing
     if ( vacuum_debug ) then
@@ -2388,6 +2568,11 @@ module vacuum_response
 
     if ( allocated(psibnd_vec ) ) deallocate( psibnd_vec  )
     if ( allocated(dpsibnd_vec) ) deallocate( dpsibnd_vec )
+    if ( allocated(jn_bez) ) deallocate( jn_bez )
+    if (allocated(J_normal)) deallocate(J_normal)
+    if (allocated(R_zj)) deallocate(R_zj)
+    if (allocated(R_psis)) deallocate(J_normal)
+
 
   end subroutine vacuum_boundary_integral
   
