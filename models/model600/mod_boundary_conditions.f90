@@ -311,8 +311,9 @@ do i=1, n_local_elms !=== do elements
           if ( (.not. mach_one_bnd_integral) .and. bcs(bnd_type)%mach1 .and. with_vpar) then
             apply_cs = .true.
           endif
-          !---------------------------------------------------------------------------------------------------                      
+                    if (my_id .eq. 0) write(*,*) 'bnd_type', bnd_type
 
+          !---------------------------------------------------------------------------------------------------                                
           if (  ( (k == var_psi     ) .and. bcs(bnd_type)%dirichlet%psi     )  .or.  &
                 ( (k == var_u       ) .and. bcs(bnd_type)%dirichlet%u       )  .or.  &
                 ( (k == var_zj      ) .and. bcs(bnd_type)%dirichlet%zj      )  .or.  &

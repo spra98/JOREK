@@ -2098,7 +2098,7 @@ module vacuum_response
     real*8   :: phi_vec(n_plane)
     real*8   :: sign_out, R_c, Z_c, R(n_gauss), Z(n_gauss), R_s(n_gauss), Z_s(n_gauss), vec_inside(2), grad_t(2), G(4, n_degrees), orientations(bnd_elm_list%n_bnd_elements)
     real*8   :: psi_s(n_gauss*n_plane), zj(n_gauss*n_plane), czj, cpsi
-    real*8, allocatable :: R_zj(:), R_psis(:), J_normal(:), jn_bez(:)
+    real*8, allocatable :: fact_R_zj(:), fact_R_psis(:), R_zj(:), R_psis(:), J_normal(:), jn_bez(:), test_sig(:), bez_sig(:), phi_t
     type(type_bnd_element) :: bndelem_s
     type(type_element)     :: elem_s    
     type(type_node)        :: node_k, node_s
@@ -2204,28 +2204,177 @@ module vacuum_response
       endif
 
     end if
+    
+    if (halo_imp) then
 
-    ! Writing transformation matrix real-space -> Bezier
-    Npts_tot = n_gauss * n_plane * bnd_elm_list%n_bnd_elements
+      ! Writing transformation matrix real-space -> Bezier
+      Npts_tot = n_gauss * n_plane * bnd_elm_list%n_bnd_elements
 
-    if (.not. ALLOCATED(R_psis)) allocate(R_psis(npts_tot))
-    if (.not. ALLOCATED(R_zj)) allocate(R_zj(npts_tot))
-    if (.not. ALLOCATED(J_normal)) allocate(J_normal(npts_tot))
-    if (.not. ALLOCATED(jn_bez)) allocate(jn_bez(n_dof_starwall))
+      if (.not. ALLOCATED(R_psis)) allocate(R_psis(npts_tot))
+      if (.not. ALLOCATED(R_zj)) allocate(R_zj(npts_tot))
+      if (.not. ALLOCATED(fact_R_psis)) allocate(fact_R_psis(npts_tot))
+      if (.not. ALLOCATED(fact_R_zj)) allocate(fact_R_zj(npts_tot))
+      if (.not. ALLOCATED(J_normal)) allocate(J_normal(npts_tot))
+      if (.not. ALLOCATED(jn_bez)) allocate(jn_bez(n_dof_starwall))
+      if (.not. ALLOCATED(test_sig)) ALLOCATE(test_sig(npts_tot))
+      if (.not. ALLOCATED(bez_sig)) ALLOCATE(bez_sig(n_dof_starwall))
+      
+      npol     = bnd_elm_list%n_bnd_elements * n_gauss
+      if (my_id.eq. 0) write(*,*) 'NPOL', npol
+      if (.not. allocated(identity_mat)) allocate(identity_mat(Npts_tot, Npts_tot))
 
-    npol     = npts_tot / n_plane
-    if (.not. allocated(identity_mat)) allocate(identity_mat(Npts_tot, Npts_tot))
+      identity_mat = 0.d0
+      do jj = 1 , Npts_tot
+        identity_mat(jj,jj) = 1.d0
+      end do
+      do mp = 1, n_plane
+        phi_vec   (mp)      = 2.d0*PI*float(mp-1)/float(n_plane) / float(n_period)
+      enddo
+      ! N.B. Real2Bez WILL BE ALLOCATED BASED ON THE NUMBER OF FREE BOUNDARY MODES IN STARWALL!    
+      call fourier(identity_mat, Npts_tot, n_plane, n_gauss, Npts_tot, phi_vec, 'gauss', Real2Bez, my_id, bnd_node_list, bnd_elm_list)
+      ! ! --- Write to file ---
+      ! if (my_id .eq. 0) write(*,*) 'Writing real2bez.dat'
+      ! open(unit=12, file="Real2Bez.dat", status="replace", action="write", form="formatted")
+      ! do i = 1,n_dof_starwall
+      !   write(12, '(100(1x,ES20.12))') (real2bez(i,j), j=1,npts_tot)
+      ! end do
+      ! close(12)
+      ! if (my_id .eq. 0) write(*,*) 'Done writing real2bez.dat'
 
-    identity_mat = 0.d0
-    do jj = 1 , Npts_tot
-      identity_mat(jj,jj) = 1.d0
-    end do
+      test_sig = 0.d0
+      bez_sig  = 0.d0
+      ! Define test_sig
+      do mp = 1,n_plane
+        phi_t = 2.d0*PI*float(mp-1)/float(n_plane) / float(n_period)
+        test_sig((mp-1)*npol+1:mp*npol) = sin(phi_t)
+      enddo
+      do i = 1,n_dof_starwall
+        bez_sig(i) = sum(real2bez(i,:)*test_sig(:))
+      enddo
 
-    do mp = 1, n_plane
-      phi_vec   (mp)      = 2.d0*PI*float(mp-1)/float(n_plane) / float(n_period)
-    enddo
-    ! N.B. Real2Bez WILL BE ALLOCATED BASED ON THE NUMBER OF FREE BOUNDARY MODES IN STARWALL!    
-    call fourier(identity_mat, Npts_tot, n_plane, n_gauss, Npts_tot, phi_vec, 'gauss', Real2Bez, my_id, bnd_node_list, bnd_elm_list)
+      if (my_id .eq. 0) write(*,*) 'Writing test_sig.dat'
+      open(unit=12, file="test_sig.dat", status="replace", action="write", form="formatted")
+      do i = 1,npts_tot
+        write(12,*) test_sig(i)
+      end do
+      close(12)
+      if (my_id .eq. 0) write(*,*) 'Done writing test_sig.dat'  
+
+      if (my_id .eq. 0) write(*,*) 'Writing bez_sig.dat'
+      open(unit=12, file="bez_sig.dat", status="replace", action="write", form="formatted")
+      do i = 1,n_dof_starwall
+        write(12,*) bez_sig(i)
+      end do
+      close(12)
+      if (my_id .eq. 0) write(*,*) 'Done writing bez_sig.dat'      
+
+      ! Calculate real space coefficients for implicit time stepping
+      fact_R_psis = 0.d0
+      fact_R_zj   = 0.d0 
+      J_normal    = 0.d0
+      jn_bez      = 0.d0
+
+      do s_bndelem = 1,bnd_elm_list%n_bnd_elements
+        bndelem_s = bnd_elm_list%bnd_element(s_bndelem)
+        elem_s    = element_list%element(bndelem_s%element)
+
+        psi_s = 0.d0
+        zj    = 0.d0
+        R     = 0.d0
+        Z     = 0.d0
+        R_s   = 0.d0
+        Z_s   = 0.d0
+
+        do s_vertex = 1, 2 ! (loop over nodes in element s_bndelem)
+          do s_dof = 1, 2 ! (loop over node dofs)
+            s_node      = bndelem_s%vertex(s_vertex)
+            node_s      = node_list%node(s_node)
+            s_dir       = bndelem_s%direction(s_vertex,s_dof)
+            s_size      = bndelem_s%size(s_vertex,s_dof)
+            
+            R  (:)   = R  (:)  + node_s%x(1,s_dir,1) * s_size * H1  (s_vertex,s_dof,:)
+            Z  (:)   = Z  (:)  + node_s%x(1,s_dir,1) * s_size * H1  (s_vertex,s_dof,:)
+            R_s(:)   = R_s(:)  + node_s%x(1,s_dir,1) * s_size * H1_s(s_vertex,s_dof,:)
+            Z_s(:)   = Z_s(:)  + node_s%x(1,s_dir,2) * s_size * H1_s(s_vertex,s_dof,:)
+
+            do mp=1,n_plane
+              do s_tor = 1, sr%n_tor ! (loop over toroidal harmonics)
+                ! Chunks of size n_gauss * n_plane
+                psi_s((mp-1)*n_gauss+1:mp*n_gauss) =    psi_s((mp-1)*n_gauss+1:mp*n_gauss) + &
+                node_s%values(sr%i_tor(s_tor),s_dir,var_psi) * s_size*H1_s(s_vertex,s_dof,:) * HZ(sr%i_tor(s_tor),mp)
+
+                zj((mp-1)*n_gauss+1:mp*n_gauss)    =    zj((mp-1)*n_gauss+1:mp*n_gauss) + &
+                node_s%values(sr%i_tor(s_tor),s_dir,var_zj) * s_size*H1(s_vertex,s_dof,:) * HZ(sr%i_tor(s_tor),mp)
+              enddo            
+            enddo
+
+          enddo
+        enddo
+
+        !---------------------- BOUNDARY ELEMENT ORIENTATION-------------------------- 
+        ! --- Calculate an inside point on the element to then calculate the
+        ! direction of bnd normals
+
+        vec_inside(2) = 0.d0
+        grad_t(2)     = 0.d0
+        sign_out   = 0.d0
+
+        call basisfunctions(xgauss(2),xgauss(2), G)  
+        R_c = 0.d0 ;  Z_c = 0.d0 
+        do i = 1, n_vertex_max
+          do j = 1, n_degrees
+            node_k = node_list%node(elem_s%vertex(i)) 
+            R_c    = R_c + node_k%x(1,j,1) * elem_s%size(i,j) * G(i,j)
+            Z_c    = Z_c + node_k%x(1,j,2) * elem_s%size(i,j) * G(i,j)
+          enddo
+        enddo  
+        vec_inside = (/ R_c - R(2), Z_c - Z(2) /)       ! vector pointing towards the domain
+        !--- Find out correct sign of the normal (it has to point outwards the domain)
+        grad_t     = (/ -Z_s(2) , R_s(2) /)     ! gradient of the coordinate t (normal to the boundary here) 
+        ! grad_t could point either outwards or inwards depending on the orientation of the bnd_element!
+        sign_out   = -1.d0 * sign( 1.d0, ( vec_inside(1)*grad_t(1) + vec_inside(2)*grad_t(2) ) )  ! (+1 if normal outwards)
+
+        do mp = 1, n_plane
+
+          fact_R_zj ((s_bndelem-1)*n_gauss+1+(mp-1)*npol : s_bndelem*n_gauss+(mp-1)*npol)  = &
+            psi_s((mp-1)*n_gauss+1:mp*n_gauss) &
+            / sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out    
+
+          fact_R_psis ((s_bndelem-1)*n_gauss+1+(mp-1)*npol : s_bndelem*n_gauss+(mp-1)*npol)  = &
+              zj((mp-1)*n_gauss+1:mp*n_gauss) &
+              / sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out  
+                              
+          J_normal ((s_bndelem-1)*n_gauss+1+(mp-1)*npol : s_bndelem*n_gauss+(mp-1)*npol) = &
+            ( ( zj((mp-1)*n_gauss+1:mp*n_gauss) * psi_s((mp-1)*n_gauss+1:mp*n_gauss)) ) &
+                                      /sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out
+        enddo
+
+      enddo
+
+      ! Calculate J_normal in Bezier
+      do jj = 1,sr%nd_bez
+        Jn_bez(jj) = sum(real2bez(jj,:) * J_normal(:))
+      enddo
+
+            if (my_id .eq. 0) write(*,*) 'Writing J_normal.dat'
+      open(unit=12, file="J_normal.dat", status="replace", action="write", form="formatted")
+      do i = 1,npts_tot
+        write(12,*) J_normal(i)
+      end do
+      close(12)
+      if (my_id .eq. 0) write(*,*) 'Done writing J_normal.dat'   
+
+            if (my_id .eq. 0) write(*,*) 'Writing J_bez.dat'
+      open(unit=12, file="J_bez.dat", status="replace", action="write", form="formatted")
+      do i = 1,n_dof_starwall
+        write(12,*) Jn_bez(i)
+      end do
+      close(12)
+      if (my_id .eq. 0) write(*,*) 'Done writing Jn_bez.dat'   
+
+    endif
+
+
 
 #ifdef __GFORTRAN__
     wgauss_copy(1:4) = wgauss(1:4)
@@ -2236,7 +2385,7 @@ module vacuum_response
     !$omp shared(my_id, a_mat, rhs_loc, bnd_elm_list, element_list, bnd_node_list, node_list, index_min, index_max,          &
     !$omp   response_m_e, response_m_e_i, response_m_h, response_m_j, response_m_j_i, response_m_t_h, H1, H1_s, HZ, sr,              &
     !$omp   bext_tan, I_coils, wall_curr, dwall_curr, psibnd_vec, dpsibnd_vec,psibnd_coils,                   &
-    !$omp  wall_curr_i, dwall_curr_i, wall_curr_e, dwall_curr_e, halo_imp, F0, real2bez,                      &
+    !$omp  wall_curr_i, dwall_curr_i, wall_curr_e, dwall_curr_e, halo_imp, F0, npol, npts_tot, real2bez, J_normal, Jn_bez, fact_R_zj, fact_R_psis,                    &
 #ifdef __GFORTRAN__
     !$omp   wgauss_copy,                                                                                      &
 #endif
@@ -2244,7 +2393,7 @@ module vacuum_response
     !$omp private(m_bndelem, j_bndelem, s_bndelem, bndelem_m, elem_s, bndelem_s, node_k, node_s, bndelem_j, x_s, y_s, l_vertex, l_dof, l_node,l_dir, l_node_bnd,                  &
     !$omp   l_index, l_size, l_tor, l_row_j, l_row_psi, ms, dA, m_plane,common_prefactor, s_vertex, s_dof,                   &
     !$omp   testfunc_l, i_vertex, i_dof, i_node, i_dir, s_dir, i_node_bnd, i_index, i_size, s_size, i_starwall,              &
-    !$omp   npol, npts_tot, vec_inside, grad_t, sign_out, R_c, Z_c, R,Z,R_s,Z_s, G, orientations,  psi_s, zj, R_zj, R_psis, J_normal, jn_bez, czj, cpsi,  &
+    !$omp   mp,R_c, Z_c, R,Z,R_s,Z_s, G, orientations,  psi_s, zj, czj, cpsi,  R_zj, R_psis,  &
     !$omp   i_tor, i_resp, i_resp_old, i_resp_0, basfunc_i, j_node_bnd, j_dof, j_size, j_vertex, i,j,jj, j_node, s_node, j_dir,     &
     !$omp   j_index, j_starwall, j_tor, s_tor, j_resp, j_col_psi, j_col_zj, sparsepos_jp, sparsepos_pp, sparsepos_jj,                        &
     !$omp   amat_contrib, rhs_contrib, amat_contrib_psi, amat_contrib_zj, blockpos_jp, blockpos_pp, ierr )                                   &
@@ -2337,7 +2486,6 @@ module vacuum_response
                     j_node      = bnd_node_list%bnd_node(j_node_bnd)%index_jorek
                     
                     if (halo_imp) then
-                    !if (my_id .eq. 0) write(*,*) 'Halo implicit, searching for bnd node index'
                       ! Find boundary element to which the boundary node belongs and determine 
                       ! if the index of the node is 1 or 2
                       do j_bndelem = 1,bnd_elm_list%n_bnd_elements
@@ -2372,108 +2520,28 @@ module vacuum_response
 
                           R_zj = 0.d0
                           R_psis = 0.d0
-                          J_normal = 0.d0
+                           
+                          ! CALCULATE COEFFICIENTS FOR THE HALO IMPLICIT COUPLING
+                          
                           do s_bndelem = 1,bnd_elm_list%n_bnd_elements
-                            bndelem_s = bnd_elm_list%bnd_element(s_bndelem)
-                            elem_s    = element_list%element(bndelem_s%element)
-
-                            psi_s = 0.d0
-                            zj    = 0.d0
-                            R     = 0.d0
-                            Z     = 0.d0
-                            R_s   = 0.d0
-                            Z_s   = 0.d0
-
-                            do s_vertex = 1, 2 ! (loop over nodes in element s_bndelem)
-                              do s_dof = 1, 2 ! (loop over node dofs)
-                                s_node      = bndelem_s%vertex(s_vertex)
-                                node_s      = node_list%node(s_node)
-                                s_dir       = bndelem_m%direction(l_vertex,s_dof)
-                                s_size      = bndelem_m%size(s_vertex,s_dof)
-                                
-                                R  (:)   = R  (:)  + node_s%x(1,s_dir,1) * s_size * H1  (s_vertex,s_dof,:)
-                                Z  (:)   = Z  (:)  + node_s%x(1,s_dir,1) * s_size * H1  (s_vertex,s_dof,:)
-                                R_s(:)   = R_s(:)  + node_s%x(1,s_dir,1) * s_size * H1_s(s_vertex,s_dof,:)
-                                Z_s(:)   = Z_s(:)  + node_s%x(1,s_dir,2) * s_size * H1_s(s_vertex,s_dof,:)
-
-                                do mp=1,n_plane
-                                  do s_tor = 1, sr%n_tor ! (loop over toroidal harmonics)
-                                    ! Chunks of size n_gauss * n_plane
-                                    psi_s((mp-1)*n_gauss+1:mp*n_gauss) =    psi_s((mp-1)*n_gauss+1:mp*n_gauss) + &
-                                    node_s%values(sr%i_tor(s_tor),s_dir,var_psi) * s_size*H1_s(s_vertex,s_dof,:) * HZ(sr%i_tor(s_tor),mp)
-
-                                    zj((mp-1)*n_gauss+1:mp*n_gauss)    =    zj((mp-1)*n_gauss+1:mp*n_gauss) + &
-                                    node_s%values(sr%i_tor(s_tor),s_dir,var_zj) * s_size*H1(s_vertex,s_dof,:) * HZ(sr%i_tor(s_tor),mp)
-                                  enddo            
-                                enddo
+                            do mp=1,n_plane
+                              do ms=1,n_gauss
+                              !if (my_id.eq.0) write(*,*) 's_bndelem,ms,mp, npol, index=', s_bndelem, ms, mp, npol, n_gauss*(s_bndelem-1)+ ms + (mp-1)*npol
+                                R_zj( n_gauss*(s_bndelem-1)+ ms + (mp-1)*npol ) = &
+                                      fact_R_zj( n_gauss*(s_bndelem-1)+ ms + (mp-1)*npol ) &
+                                    * j_size * H1(j_vertex,j_dof,ms) * HZ(j_tor,mp)
+                                R_psis( n_gauss*(s_bndelem-1)+ ms + (mp-1)*npol ) = &
+                                      fact_R_psis( n_gauss*(s_bndelem-1)+ ms + (mp-1)*npol ) &
+                                    * j_size * H1_s(j_vertex,j_dof,ms) * HZ(j_tor,mp)
 
                               enddo
                             enddo
+                          enddo
 
-                            ! do mp = 1,n_plane ! Fill up first going along the poloidal angle and then proceeding to next poloidal plane (along phi)
+                          czj = sum(real2bez(j_resp,:) * R_zj(:))
+                          cpsi = sum(real2bez(j_resp,:) * R_psis(:))
 
-                            !   S_psi( (s_bndelem-1)*n_gauss+1+(mp-1)*npol : s_bndelem*n_gauss+(mp-1)*npol ) = psi_s((mp-1)*n_gauss+1:mp*n_gauss)                          
-                            !   S_zj( (s_bndelem-1)*n_gauss+1+(mp-1)*npol : s_bndelem*n_gauss+(mp-1)*npol ) = zj((mp-1)*n_gauss+1:mp*n_gauss)                          
-
-                            ! enddo
-                            ! Stack spatial coordinates along poloidal plane
-                            ! R_pol((s_bndelem-1)*n_gauss+1: s_bndelem*n_gauss) = R(:)
-                            ! R_s_pol((s_bndelem-1)*n_gauss+1: s_bndelem*n_gauss) = R_s(:)
-                            ! Z_s_pol((s_bndelem-1)*n_gauss+1: s_bndelem*n_gauss) = Z_s(:)
-                            
-                            !---------------------- BOUNDARY ELEMENT ORIENTATION-------------------------- 
-                            ! --- Calculate an inside point on the element to then calculate the
-                            ! direction of bnd normals
-
-                            vec_inside(2) = 0.d0
-                            grad_t(2)     = 0.d0
-                            sign_out   = 0.d0
-
-                            call basisfunctions(xgauss(2),xgauss(2), G)  
-                            R_c = 0.d0 ;  Z_c = 0.d0 
-                            do i = 1, n_vertex_max
-                              do j = 1, n_degrees
-                                node_k = node_list%node(elem_s%vertex(i)) 
-                                R_c    = R_c + node_k%x(1,j,1) * elem_s%size(i,j) * G(i,j)
-                                Z_c    = Z_c + node_k%x(1,j,2) * elem_s%size(i,j) * G(i,j)
-                              enddo
-                            enddo  
-                            vec_inside = (/ R_c - R(2), Z_c - Z(2) /)       ! vector pointing towards the domain
-                            !--- Find out correct sign of the normal (it has to point outwards the domain)
-                            grad_t     = (/ -Z_s(2) , R_s(2) /)     ! gradient of the coordinate t (normal to the boundary here) 
-                            ! grad_t could point either outwards or inwards depending on the orientation of the bnd_element!
-                            sign_out   = -1.d0 * sign( 1.d0, ( vec_inside(1)*grad_t(1) + vec_inside(2)*grad_t(2) ) )  ! (+1 if normal outwards)
-                            ! Save the orientation for all elements
-                            !orientations(s_bndelem) = sign_out    
-                            
-                            ! Fill D_pol for that bnd element
-                           ! D_pol((s_bndelem-1)*n_gauss+1: s_bndelem*n_gauss) = sign_out / (sqrt(R_s(:)**2.d0+Z_s(:)**2.d0)) / (F0*R(:))   
-
-                            do mp = 1, n_plane
-
-                              R_zj ((s_bndelem-1)*n_gauss+1+(mp-1)*npol : s_bndelem*n_gauss+(mp-1)*npol)  = &
-                                  psi_s((mp-1)*n_gauss+1:mp*n_gauss) &
-                                   / sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out               &
-                                   * j_size * H1(j_vertex,j_dof,:) * HZ(j_tor,mp)  ! last line = d j_real / dj_Bez
-
-                              R_psis ((s_bndelem-1)*n_gauss+1+(mp-1)*npol : s_bndelem*n_gauss+(mp-1)*npol)  = &
-                                  zj((mp-1)*n_gauss+1:mp*n_gauss) &
-                                   / sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out               &
-                                   * j_size * H1_s(j_vertex,j_dof,:) * HZ(j_tor,mp)  ! last line = d psi_s_real / dpsi_Bez
-                              
-                              J_normal ((s_bndelem-1)*n_gauss+1+(mp-1)*npol : s_bndelem*n_gauss+(mp-1)*npol) = &
-                               ((zj((mp-1)*n_gauss+1:mp*n_gauss) * psi_s((mp-1)*n_gauss+1:mp*n_gauss)) ) &
-                                                          /sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out
-
-                            enddo             
-
-                          enddo  ! END OF S_elm LOOP
-
-                          ! CALCULATE COEFFICIENTS FOR THE HALO IMPLICIT COUPLING
-                           czj = sum(real2bez(j_resp,:) * R_zj(:))
-                           cpsi = sum(real2bez(j_resp,:) * R_psis(:))
-                        !if (my_id .eq. 0) write(*,*) 'Halo implicit, done calculating coefficients'
-
+                  
                         endif  ! END OF HALO IMPLICIT IF
                       
 
@@ -2520,14 +2588,7 @@ module vacuum_response
                     rhs_contrib = sum( response_m_h(i_resp,:) * psibnd_vec(:))                     &
                               + sum( response_m_j_i(i_resp,:) * dpsibnd_vec(:))
                   elseif (CARIDDI_mode .and. halo_freeb .and. halo_imp) then
-                  if (my_id .eq. 0 .and. i_starwall .eq. 1 .and. i_vertex .eq. 1 .and. i_dof .eq. 1 &
-                      .and. l_vertex == 1 .and. l_dof == 1 .and. m_bndelem == 1) write(*,*) 'Calculating Jn_bez'
 
-                  ! Calculate J_normal in Bezier
-                  Jn_bez = 0.d0
-                  do jj = 1,sr%nd_bez
-                    Jn_bez(jj) = sum(real2bez(jj,:) * J_normal(:))
-                  enddo
                     rhs_contrib = sum( response_m_h(i_resp,:) * psibnd_vec(:))                     &
                               + sum( response_m_j_i(i_resp,:) * dpsibnd_vec(:))                    &
                               + sum(response_m_t_h(i_resp,:) * jn_bez(:))
@@ -2571,8 +2632,9 @@ module vacuum_response
     if ( allocated(jn_bez) ) deallocate( jn_bez )
     if (allocated(J_normal)) deallocate(J_normal)
     if (allocated(R_zj)) deallocate(R_zj)
-    if (allocated(R_psis)) deallocate(J_normal)
-
+    if (allocated(R_psis)) deallocate(R_psis)
+    if (allocated(fact_R_zj)) deallocate(fact_R_zj)
+    if (allocated(fact_R_psis)) deallocate(fact_R_psis)
 
   end subroutine vacuum_boundary_integral
   
