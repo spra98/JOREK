@@ -1387,11 +1387,11 @@ module vacuum
   real*8, allocatable   :: zj(:), psi_s(:), rho(:), psi_s_mat(:,:), zj_mat(:,:)
   real*8, allocatable   :: T0(:), rho_s(:), T0_s(:), P0_s(:)
   real*8, allocatable   :: fourier_psi_s_0(:,:), fourier_zj_0(:,:), psi_s_0(:), psi_s_0_mat(:,:), zj_0(:), zj_0_mat(:,:)
-  real*8, allocatable   :: J_normal_temp(:), J_normal(:), J_normal_mat(:,:), Jn_back2real(:), Jn_CAR(:)
+  real*8, allocatable   :: J_normal_temp(:), J_normal(:), J_normal_rescale(:), J_normal_mat(:,:), Jn_back2real(:), Jn_CAR(:)
   real*8                :: phi_v, size_i(2), phi_c
   integer               :: k_vertex, k_dof, k_node, k_dir, m_bndelem, m_bndelem_arr(1), i ,j, index, i_vertex, i_node, i_start, i_node_bnd, i_dof
   integer               :: nctrl, nsub_ctrl, npol, mp, in, l_tor, f_tor, i_resp_1, i_resp_2, m_pt, itor, npts_elm, npts_CAR, i_CAR_glob
-  real*8                :: k_size,vec_inside(2), grad_t(2), sign_out, phi(n_plane), G(4, n_degrees), s
+  real*8                :: k_size,vec_inside(2), grad_t(2), sign_out, phi(n_plane), G(4, n_degrees), s, fact_mu0
   type(type_bnd_element):: bndelem_m
   real*8, allocatable   :: Jn_bez(:) , Jn_bez_mat(:,:), Bez2Real(:,:)                   !< output matrix with Bezier
   logical               :: reconvert_to_real, is_c, full_Jn, debug_Jn
@@ -1412,7 +1412,8 @@ module vacuum
 
   ! Debugging
   debug_Jn = .false.
-
+  
+  fact_mu0 = 1.d0/mu_zero
 
   ! Define electrode currents (complete and full rank)
 
@@ -1483,6 +1484,7 @@ module vacuum
   if (ALLOCATED(zj_0_mat)) deallocate(zj_0_mat)   
   if (ALLOCATED(J_normal_temp)) deallocate(J_normal_temp)
   if (ALLOCATED(J_normal)) deallocate(J_normal)
+  if (ALLOCATED(J_normal)) deallocate(J_normal)
   if (ALLOCATED(J_normal_mat)) deallocate(J_normal_mat)
   if (ALLOCATED(Jn_bez)) deallocate(Jn_bez)
   if (ALLOCATED(Jn_bez_mat)) deallocate(Jn_bez_mat)
@@ -1504,10 +1506,10 @@ module vacuum
       fourier_zj_0(nsub_ctrl,1),  psi_s_0(nsub_ctrl*n_plane)  , zj_0(nsub_ctrl*n_plane), &
       psi_s_0_mat(nsub_ctrl*n_plane,1), zj_0_mat(nsub_ctrl*n_plane,1), Jn_back2real(nctrl), &
       R(nsub_ctrl), Z(nsub_ctrl), R_s(nsub_ctrl), Z_s(nsub_ctrl), R_global(nctrl), Z_global(nctrl), phi_global(nctrl), &
-      J_normal_temp(nsub_ctrl*n_plane) , J_normal(nctrl), J_normal_mat(nctrl,1), Jn_bez(n_dof_bnd*sr%n_tor) , Jn_bez_mat(n_dof_bnd*sr%n_tor,1), Bez2Real(nctrl, n_dof_bnd*sr%n_tor)   )
+      J_normal_temp(nsub_ctrl*n_plane) , J_normal(nctrl), J_normal_rescale(nctrl),J_normal_mat(nctrl,1), Jn_bez(n_dof_bnd*sr%n_tor) , Jn_bez_mat(n_dof_bnd*sr%n_tor,1), Bez2Real(nctrl, n_dof_bnd*sr%n_tor)   )
 
       
-      J_normal = 0.d0 ; Jn_bez = 0.d0; Jn_bez_mat = 0.d0; J_normal_mat=0.d0 ; Bez2Real = 0.d0; Jn_back2real=0.d0
+      J_normal = 0.d0 ; J_normal_rescale=0.d0; Jn_bez = 0.d0; Jn_bez_mat = 0.d0; J_normal_mat=0.d0 ; Bez2Real = 0.d0; Jn_back2real=0.d0
       R_global = 0.d0; Z_global = 0.d0; phi_global = 0.d0
 
     case ('gauss') 
@@ -1517,10 +1519,10 @@ module vacuum
       fourier_zj_0(nsub_ctrl,1),  psi_s_0(nsub_ctrl*n_plane)  , zj_0(nsub_ctrl*n_plane), &
       psi_s_0_mat(nsub_ctrl*n_plane,1), zj_0_mat(nsub_ctrl*n_plane,1), Jn_back2real(nctrl), &
       R(nsub_ctrl), Z(nsub_ctrl), R_s(nsub_ctrl), Z_s(nsub_ctrl), R_global(nctrl), Z_global(nctrl), phi_global(nctrl), &
-      J_normal_temp(nsub_ctrl*n_plane) , J_normal(nctrl), J_normal_mat(nctrl,1), Jn_bez(n_dof_bnd*sr%n_tor) , Jn_bez_mat(n_dof_bnd*sr%n_tor,1), Bez2Real(nctrl, n_dof_bnd*sr%n_tor)   )
+      J_normal_temp(nsub_ctrl*n_plane) , J_normal(nctrl), J_normal_rescale(nctrl), J_normal_mat(nctrl,1), Jn_bez(n_dof_bnd*sr%n_tor) , Jn_bez_mat(n_dof_bnd*sr%n_tor,1), Bez2Real(nctrl, n_dof_bnd*sr%n_tor)   )
 
       
-      J_normal = 0.d0 ; Jn_bez = 0.d0; Jn_bez_mat = 0.d0; J_normal_mat=0.d0 ; Bez2Real = 0.d0; Jn_back2real=0.d0
+      J_normal = 0.d0 ; J_normal_rescale=0.d0; Jn_bez = 0.d0; Jn_bez_mat = 0.d0; J_normal_mat=0.d0 ; Bez2Real = 0.d0; Jn_back2real=0.d0
       R_global = 0.d0; Z_global = 0.d0; phi_global = 0.d0
 
   end select
@@ -1705,6 +1707,29 @@ module vacuum
             J_normal( (m_bndelem-1)*nsub_ctrl+1+(mp-1)*npol : m_bndelem*nsub_ctrl+(mp-1)*npol ) = J_normal_temp((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)                          
 
           enddo
+          
+          if (debug_Jn) then
+            if (my_id == 0) then
+              OPEN(UNIT=12, FILE="Jn_gauss_BEFORE_RESCALE.dat", ACTION="write", STATUS="replace")
+              DO i=1,nctrl
+                WRITE(12,*) J_normal(i)
+              END DO
+              CLOSE(12)
+            endif
+          endif
+
+          ! --- RESCALE BY 1/mu_0
+          J_normal_rescale(:) = fact_mu0 * J_normal(:)
+
+          if (debug_Jn) then
+            if (my_id == 0) then
+              OPEN(UNIT=12, FILE="Jn_gauss_AFTER_RESCALE.dat", ACTION="write", STATUS="replace")
+              DO i=1,nctrl
+                WRITE(12,*) J_normal_rescale(i)
+              END DO
+              CLOSE(12)
+            endif
+          endif
 
         else
         ! HARMONICS SEPARATION (OLD)
@@ -1757,7 +1782,7 @@ module vacuum
                                sqrt(R_s(i)**2.d0 + Z_s(i)**2.d0) / (F0*R(i)) * sign_out
         end do
 
-
+          Jn_CAR = fact_mu0 * Jn_CAR
     end select 
 
   enddo ! end bnd elements loop
@@ -1807,7 +1832,7 @@ module vacuum
 
 
    
-      J_normal_mat(:,1) = J_normal(:)
+      J_normal_mat(:,1) = J_normal_rescale(:)
   
       ! Transform the assembled array in Bezier
       call fourier( J_normal_mat, nctrl, n_plane, nsub_ctrl, 1, phi , mapping, Jn_bez_mat, my_id , bnd_node_list, bnd_elm_list)

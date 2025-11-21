@@ -2045,6 +2045,7 @@ module vacuum_response
     use mpi_mod
     use mod_settings
     use mod_integer_types
+    use constants, only: MU_ZERO
 
     implicit none
 
@@ -2094,7 +2095,7 @@ module vacuum_response
 
     integer  :: i_start_pf, i_end_pf     ! Indices for PF coils
     integer  :: npts_tot, jj , mp, npol,j
-    real*8, allocatable :: identity_mat(:,:), real2bez(:,:)
+    real*8, allocatable :: identity_mat(:,:), real2bez(:,:), fact_mu0
     real*8   :: phi_vec(n_plane)
     real*8   :: sign_out, R_c, Z_c, R(n_gauss), Z(n_gauss), R_s(n_gauss), Z_s(n_gauss), vec_inside(2), grad_t(2), G(4, n_degrees), orientations(bnd_elm_list%n_bnd_elements)
     real*8   :: psi_s(n_gauss*n_plane), zj(n_gauss*n_plane), czj, cpsi
@@ -2154,6 +2155,7 @@ module vacuum_response
     call boundary_check(my_id)
     allocate(rhs_contrib_arr(n_dof_starwall))
     rhs_contrib_arr=0.0
+    fact_mu0 = 1.d0/mu_zero
     if (resistive_wall) then
 
       ! ===============================  Btan (eddy + halo) ===================================== 
@@ -2241,32 +2243,32 @@ module vacuum_response
       ! close(12)
       ! if (my_id .eq. 0) write(*,*) 'Done writing real2bez.dat'
 
-      test_sig = 0.d0
-      bez_sig  = 0.d0
-      ! Define test_sig
-      do mp = 1,n_plane
-        phi_t = 2.d0*PI*float(mp-1)/float(n_plane) / float(n_period)
-        test_sig((mp-1)*npol+1:mp*npol) = sin(phi_t)
-      enddo
-      do i = 1,n_dof_starwall
-        bez_sig(i) = sum(real2bez(i,:)*test_sig(:))
-      enddo
+      ! test_sig = 0.d0
+      ! bez_sig  = 0.d0
+      ! ! Define test_sig
+      ! do mp = 1,n_plane
+      !   phi_t = 2.d0*PI*float(mp-1)/float(n_plane) / float(n_period)
+      !   test_sig((mp-1)*npol+1:mp*npol) = sin(phi_t)
+      ! enddo
+      ! do i = 1,n_dof_starwall
+      !   bez_sig(i) = sum(real2bez(i,:)*test_sig(:))
+      ! enddo
 
-      if (my_id .eq. 0) write(*,*) 'Writing test_sig.dat'
-      open(unit=12, file="test_sig.dat", status="replace", action="write", form="formatted")
-      do i = 1,npts_tot
-        write(12,*) test_sig(i)
-      end do
-      close(12)
-      if (my_id .eq. 0) write(*,*) 'Done writing test_sig.dat'  
+      ! if (my_id .eq. 0) write(*,*) 'Writing test_sig.dat'
+      ! open(unit=12, file="test_sig.dat", status="replace", action="write", form="formatted")
+      ! do i = 1,npts_tot
+      !   write(12,*) test_sig(i)
+      ! end do
+      ! close(12)
+      ! if (my_id .eq. 0) write(*,*) 'Done writing test_sig.dat'  
 
-      if (my_id .eq. 0) write(*,*) 'Writing bez_sig.dat'
-      open(unit=12, file="bez_sig.dat", status="replace", action="write", form="formatted")
-      do i = 1,n_dof_starwall
-        write(12,*) bez_sig(i)
-      end do
-      close(12)
-      if (my_id .eq. 0) write(*,*) 'Done writing bez_sig.dat'      
+      ! if (my_id .eq. 0) write(*,*) 'Writing bez_sig.dat'
+      ! open(unit=12, file="bez_sig.dat", status="replace", action="write", form="formatted")
+      ! do i = 1,n_dof_starwall
+      !   write(12,*) bez_sig(i)
+      ! end do
+      ! close(12)
+      ! if (my_id .eq. 0) write(*,*) 'Done writing bez_sig.dat'      
 
       ! Calculate real space coefficients for implicit time stepping
       fact_R_psis = 0.d0
@@ -2350,7 +2352,8 @@ module vacuum_response
         enddo
 
       enddo
-
+      ! RESCALE J_normal for SI units!
+      J_normal = J_normal * fact_mu0
       ! Calculate J_normal in Bezier
       do jj = 1,sr%nd_bez
         Jn_bez(jj) = sum(real2bez(jj,:) * J_normal(:))
@@ -2385,7 +2388,7 @@ module vacuum_response
     !$omp shared(my_id, a_mat, rhs_loc, bnd_elm_list, element_list, bnd_node_list, node_list, index_min, index_max,          &
     !$omp   response_m_e, response_m_e_i, response_m_h, response_m_j, response_m_j_i, response_m_t_h, H1, H1_s, HZ, sr,              &
     !$omp   bext_tan, I_coils, wall_curr, dwall_curr, psibnd_vec, dpsibnd_vec,psibnd_coils,                   &
-    !$omp  wall_curr_i, dwall_curr_i, wall_curr_e, dwall_curr_e, halo_imp, F0, npol, npts_tot, real2bez, J_normal, Jn_bez, fact_R_zj, fact_R_psis,                    &
+    !$omp  wall_curr_i, dwall_curr_i, wall_curr_e, dwall_curr_e, halo_imp, F0, npol, npts_tot, real2bez, J_normal, Jn_bez, fact_R_zj, fact_R_psis, fact_mu0,                   &
 #ifdef __GFORTRAN__
     !$omp   wgauss_copy,                                                                                      &
 #endif
@@ -2528,10 +2531,10 @@ module vacuum_response
                               do ms=1,n_gauss
                               !if (my_id.eq.0) write(*,*) 's_bndelem,ms,mp, npol, index=', s_bndelem, ms, mp, npol, n_gauss*(s_bndelem-1)+ ms + (mp-1)*npol
                                 R_zj( n_gauss*(s_bndelem-1)+ ms + (mp-1)*npol ) = &
-                                      fact_R_zj( n_gauss*(s_bndelem-1)+ ms + (mp-1)*npol ) &
+                                      fact_mu0*fact_R_zj( n_gauss*(s_bndelem-1)+ ms + (mp-1)*npol ) &
                                     * j_size * H1(j_vertex,j_dof,ms) * HZ(j_tor,mp)
                                 R_psis( n_gauss*(s_bndelem-1)+ ms + (mp-1)*npol ) = &
-                                      fact_R_psis( n_gauss*(s_bndelem-1)+ ms + (mp-1)*npol ) &
+                                      fact_mu0*fact_R_psis( n_gauss*(s_bndelem-1)+ ms + (mp-1)*npol ) &
                                     * j_size * H1_s(j_vertex,j_dof,ms) * HZ(j_tor,mp)
 
                               enddo
