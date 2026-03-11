@@ -31,6 +31,8 @@ module vacuum
   real*8, allocatable :: wall_curr_e(:)                  !< External wall current potentials (\f$Yi_k\f$).
   real*8, allocatable :: dwall_curr_e(:)                 !< Change of external wall current potentials (\f$\delta Yi_k\f$).
   real*8, allocatable :: old_dpsibnd_vec(:)              !< Previous delta Psi values required for time-stepping with zeta/=0
+  real*8, allocatable :: old_dIelec_w(:)                 !< Previous dIelec_w
+  real*8, allocatable :: old_dIelec_J(:)                 !< Previous dIelec_J
   real*8, allocatable :: I_elec_w(:)                     !< Wall electrode current for halo coupling
   real*8, allocatable :: I_elec_J(:)                     !< Shell electrode current for halo coupling
 
@@ -167,6 +169,9 @@ module vacuum
     !!!! Matrices for halo coupling  !!!!
     type(t_distrib_mat)  :: aeq_el
     type(t_distrib_mat)  :: a_yie
+    type(t_distrib_mat)  :: d_yieqe
+    type(t_distrib_mat)  :: e_yiwe
+    type(t_distrib_mat)  :: g_yiwe
     type(t_distrib_mat)  :: a_eyi
     type(t_distrib_mat)  :: a_eye
     type(t_distrib_mat)  :: fwtfw_inv
@@ -597,7 +602,7 @@ module vacuum
 
         if (halo_freeb .AND. CARIDDI_mode) then
 
-          read(file_handle) n_wall_curr_i, n_wall_curr_e, n_dof_starwall
+          read(file_handle) n_wall_curr_i, n_wall_curr_e, sr%n_electrode_J, sr%n_electrode_w,n_dof_starwall
 
           if ( allocated(wall_curr_i) ) deallocate(wall_curr_i)
           allocate( wall_curr_i(n_wall_curr_i) )
@@ -632,6 +637,15 @@ module vacuum
         if ( allocated(old_dpsibnd_vec) ) deallocate(old_dpsibnd_vec)
         allocate( old_dpsibnd_vec(n_dof_starwall) )
         old_dpsibnd_vec = 0.d0 !###
+
+        if (halo_freeb) then 
+          if ( allocated(old_dIelec_w) ) deallocate(old_dIelec_w)
+          allocate( old_dIelec_w(sr%n_electrode_w-1) )
+          old_dIelec_w = 0.d0 
+          if ( allocated(old_dIelec_J) ) deallocate(old_dIelec_J)
+          allocate( old_dIelec_J(sr%n_electrode_J-1) )
+          old_dIelec_J = 0.d0 
+        endif
         
         if ( vacuum_debug .and. resistive_wall ) then
           write(*,*) 'DEBUG: Checksums'
@@ -719,6 +733,8 @@ module vacuum
         if (halo_freeb .and. CARIDDI_mode) then
           call HDF5_integer_reading(file_id,n_wall_curr_i,"n_wall_curr_i")
           call HDF5_integer_reading(file_id,n_wall_curr_e,"n_wall_curr_e")
+          call HDF5_integer_reading(file_id, sr%n_electrode_J, "n_electrode_J")
+          call HDF5_integer_reading(file_id, sr%n_electrode_w, "n_electrode_w")
         else
          call HDF5_integer_reading(file_id,n_wall_curr,"n_wall_curr")
        endif
@@ -757,8 +773,21 @@ module vacuum
         
         if ( allocated(old_dpsibnd_vec) ) deallocate(old_dpsibnd_vec)
         allocate( old_dpsibnd_vec(n_dof_starwall) )
+
         old_dpsibnd_vec(:) = 0.d0
+        if (halo_freeb) then 
+          if ( allocated(old_dIelec_w) ) deallocate(old_dIelec_w)
+          allocate( old_dIelec_w(sr%n_electrode_w-1) )
+          old_dIelec_w = 0.d0 
+          if ( allocated(old_dIelec_J) ) deallocate(old_dIelec_J)
+          allocate( old_dIelec_J(sr%n_electrode_J-1) )
+          old_dIelec_J = 0.d0 
+        endif
         call HDF5_array1D_reading(file_id,old_dpsibnd_vec,"old_dpsibnd_vec")
+        if (halo_freeb) then 
+          call HDF5_array1D_reading(file_id,old_dIelec_J,"old_dIelec_J")
+          call HDF5_array1D_reading(file_id,old_dIelec_w,"old_dIelec_w")
+        endif
         call HDF5_integer_reading(file_id,n_coils,"n_coils")
         if ( index_start > 1 ) then
 
@@ -902,13 +931,14 @@ module vacuum
 
           if ( (.not. allocated(wall_curr_i)) .or. (.not. allocated(dwall_curr_i)) .or.                    &
           (.not. allocated(wall_curr_e)) .or. (.not. allocated(dwall_curr_e))      .or.  &
-          (.not. allocated(old_dpsibnd_vec)) ) then
+          (.not. allocated(old_dpsibnd_vec)) .or. (.not. allocated(old_dIelec_J)) .or. &
+          (.not. allocated(old_dIelec_w)) ) then
             write(*,*) 'ERROR in mod_vacuum.f90:export_restart_vacuum: Arrays not allocated.'
             stop
           end if
 
 
-          write(file_handle) n_wall_curr_i, n_wall_curr_e, n_dof_starwall
+          write(file_handle) n_wall_curr_i, n_wall_curr_e, sr%n_electrode_J, sr%n_electrode_w, n_dof_starwall
         
           write(file_handle) wall_curr_i(:)
         
@@ -1000,7 +1030,8 @@ module vacuum
         if (halo_freeb .AND. CARIDDI_mode) then
           if ( (.not. allocated(wall_curr_i)) .or. (.not. allocated(dwall_curr_i)) .or. &
                 (.not. allocated(wall_curr_e)) .or. (.not. allocated(dwall_curr_e)) .or. &
-           (.not. allocated(old_dpsibnd_vec)) ) then
+           (.not. allocated(old_dpsibnd_vec)) .or. (.not. allocated(old_dIelec_w)) &
+           .or. (.not. allocated(old_dIelec_J)) ) then
           write(*,*) 'ERROR in mod_vacuum.f90:export_restart_vacuum: Arrays not allocated.'
           stop
           end if
@@ -1015,6 +1046,8 @@ module vacuum
         if (halo_freeb .AND. CARIDDI_mode) then
           call HDF5_integer_saving(file_id,n_wall_curr_i,"n_wall_curr_i"//char(0))
           call HDF5_integer_saving(file_id,n_wall_curr_e,"n_wall_curr_e"//char(0))
+          call HDF5_integer_saving(file_id,sr%n_electrode_J,"n_electrode_J"//char(0))
+          call HDF5_integer_saving(file_id,sr%n_electrode_w,"n_electrode_w"//char(0))
         else 
          call HDF5_integer_saving(file_id,n_wall_curr,"n_wall_curr"//char(0))
         endif
@@ -1079,6 +1112,10 @@ module vacuum
      end if !--- resistive wall
 
       call HDF5_array1D_saving(file_id,old_dpsibnd_vec,n_dof_starwall,"old_dpsibnd_vec"//char(0))
+      if (halo_freeb .AND. CARIDDI_mode) then  
+        call HDF5_array1D_saving(file_id,old_dIelec_J,sr%n_electrode_J-1,"old_dIelec_J"//char(0))
+        call HDF5_array1D_saving(file_id,old_dIelec_w,sr%n_electrode_w-1,"old_dIelec_w"//char(0))
+      endif  
       call HDF5_integer_saving(file_id,n_coils,"n_coils"//char(0))      
       call HDF5_real_saving(file_id,current_FB_fact,'current_FB_fact'//char(0))
       call HDF5_real_saving(file_id,dZ_axis_integral,'dZ_axis_integral'//char(0))
@@ -1114,6 +1151,11 @@ module vacuum
     ! --- Local variables
     integer :: ierr, sz_diag(2), sz_pol(2), sz_rmp(2), sz_net, sz_VFB(2)
 
+    if ( my_id == 0 ) then
+      write(*,*) '*************************************'
+      write(*,*) '*        Broadcast_vacuum           *'
+    end if
+
     call MPI_BCAST(n_dof_starwall,1,MPI_INTEGER,0,MPI_COMM_WORLD,ierr)
     
     sz_net     = 0
@@ -1123,21 +1165,41 @@ module vacuum
     sz_VFB(:)  = 0
 
     if ( resistive_wall ) then
-      
       if (halo_freeb .and. CARIDDI_mode) then
+        if ( my_id == 0 ) then
+          write(*,*) '*************************************'
+          write(*,*) '*        Broadcasting n_halo           *'
+        end if
         call MPI_BCAST(n_wall_curr_i,1,MPI_INTEGER,0,MPI_COMM_WORLD,ierr)
         call MPI_BCAST(n_wall_curr_e,1,MPI_INTEGER,0,MPI_COMM_WORLD,ierr)
+        call MPI_BCAST(sr%n_electrode_J,1,MPI_INTEGER,0,MPI_COMM_WORLD,ierr)
+        call MPI_BCAST(sr%n_electrode_w,1,MPI_INTEGER,0,MPI_COMM_WORLD,ierr)
+         if ( my_id == 0 ) then
+          write(*,*) '*************************************'
+          write(*,*) '*     Done broadcasting n_halo      *'
+        end if       
       else
         call MPI_BCAST(n_wall_curr,1,MPI_INTEGER,0,MPI_COMM_WORLD,ierr)
       endif
+               if ( my_id == 0 ) then
+          write(*,*) '*************************************'
+          write(*,*) '*    Broadcasting n_coils           *'
+        end if 
       call MPI_BCAST(n_coils,1,MPI_INTEGER,0,MPI_COMM_WORLD,ierr)
       
       if (halo_freeb .and. CARIDDI_mode) then
+                     if ( my_id == 0 ) then
+          write(*,*) '*************************************'
+          write(*,*) '*    n_wall_curr_i+n_wall_curr_e           *'
+        end if 
         if (n_wall_curr_i + n_wall_curr_e == 0) RETURN
       else 
         if ( n_wall_curr == 0 ) return
       endif
-      
+                           if ( my_id == 0 ) then
+          write(*,*) '*************************************'
+          write(*,*) '*    DONE n_wall_curr_i+n_wall_curr_e           *'
+        end if 
       if ( my_id == 0 ) then
         if ( allocated(net_tor_wall_curr) ) then
           sz_net = size(net_tor_wall_curr)
@@ -1160,10 +1222,17 @@ module vacuum
       call MPI_BCAST( sz_pol,  2,MPI_INTEGER,0,MPI_COMM_WORLD,ierr)
       call MPI_BCAST( sz_rmp,  2,MPI_INTEGER,0,MPI_COMM_WORLD,ierr)
       call MPI_BCAST( sz_VFB,  2,MPI_INTEGER,0,MPI_COMM_WORLD,ierr)
-      
+                                 if ( my_id == 0 ) then
+          write(*,*) '*************************************'
+          write(*,*) '*    About to enter my_id=/0           *'
+        end if 
       if ( my_id /= 0 ) then
 
         if (halo_freeb .AND. CARIDDI_mode) then
+          if ( my_id == 0 ) then
+            write(*,*) '*************************************'
+            write(*,*) '* Allocating halo-related variables *'
+          end if 
           if ( allocated(wall_curr_i) ) deallocate(wall_curr_i)
           allocate( wall_curr_i(n_wall_curr_i) )
           
@@ -1186,6 +1255,12 @@ module vacuum
 
         if ( allocated(old_dpsibnd_vec) ) deallocate(old_dpsibnd_vec)
         allocate( old_dpsibnd_vec(n_dof_starwall) )
+        if (halo_freeb .AND. CARIDDI_mode) then    
+          if ( allocated(old_dIelec_J) ) deallocate(old_dIelec_J)
+          allocate( old_dIelec_J(sr%n_electrode_J-1) )
+          if ( allocated(old_dIelec_w) ) deallocate(old_dIelec_w)
+          allocate( old_dIelec_w(sr%n_electrode_w-1) )
+        endif
         if ( allocated(net_tor_wall_curr) ) deallocate(net_tor_wall_curr)
         if ( allocated(diag_coil_curr) )    deallocate(diag_coil_curr)
         if ( allocated(pf_coil_curr  ) )    deallocate(pf_coil_curr)
@@ -1229,6 +1304,10 @@ module vacuum
       endif
 
       call MPI_BCAST(old_dpsibnd_vec,n_dof_starwall,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr) 
+      if (halo_freeb) then 
+        call MPI_BCAST(old_dIelec_J,sr%n_electrode_J-1,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr) 
+        call MPI_BCAST(old_dIelec_w,sr%n_electrode_w-1,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr) 
+      endif
       call MPI_BCAST(wall_curr_initialized,1,MPI_LOGICAL,0,MPI_COMM_WORLD,ierr)
       if (         sz_net  > 0 ) call MPI_BCAST(net_tor_wall_curr, sz_net               ,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
       if ( minval(sz_diag) > 0 ) call MPI_BCAST(diag_coil_curr,    sz_diag(1)*sz_diag(2),MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
@@ -1367,6 +1446,7 @@ module vacuum
   use mod_parameters, only: n_degrees
   use data_structure
   use phys_module
+  use gauss
 
   implicit none
   ! Input, output variables
@@ -1376,7 +1456,6 @@ module vacuum
   type (type_bnd_node_list),    intent(in)    :: bnd_node_list
   character(len=*),             intent(in)    :: mapping
   integer,                      intent(in)    :: my_id, i_tor_min, i_tor_max
-  !real*8, allocatable ,         intent(out)   :: I_elec_J(:), I_elec_w(:)
 
   ! Local variables
   type(type_node)       :: node_k
@@ -1387,32 +1466,53 @@ module vacuum
   real*8, allocatable   :: zj(:), psi_s(:), rho(:), psi_s_mat(:,:), zj_mat(:,:)
   real*8, allocatable   :: T0(:), rho_s(:), T0_s(:), P0_s(:)
   real*8, allocatable   :: fourier_psi_s_0(:,:), fourier_zj_0(:,:), psi_s_0(:), psi_s_0_mat(:,:), zj_0(:), zj_0_mat(:,:)
-  real*8, allocatable   :: J_normal_temp(:), J_normal(:), J_normal_rescale(:), J_normal_mat(:,:), Jn_back2real(:), Jn_CAR(:)
+  real*8, allocatable   :: J_normal_temp(:), J_normal(:), J_normal2(:), J_normal_dim(:,:),J_normal_rescale(:), J_normal_mat(:,:), Jn_back2real(:), Jn_CAR(:)
   real*8                :: phi_v, size_i(2), phi_c
   integer               :: k_vertex, k_dof, k_node, k_dir, m_bndelem, m_bndelem_arr(1), i ,j, index, i_vertex, i_node, i_start, i_node_bnd, i_dof
-  integer               :: nctrl, nsub_ctrl, npol, mp, in, l_tor, f_tor, i_resp_1, i_resp_2, m_pt, itor, npts_elm, npts_CAR, i_CAR_glob
+  integer               :: ms,nctrl, nsub_ctrl, npol, mp, in, l_tor, f_tor, i_resp_1, i_resp_2, m_pt, itor, npts_elm, npts_CAR, i_CAR_glob
   real*8                :: k_size,vec_inside(2), grad_t(2), sign_out, phi(n_plane), G(4, n_degrees), s, fact_mu0
   type(type_bnd_element):: bndelem_m
   real*8, allocatable   :: Jn_bez(:) , Jn_bez_mat(:,:), Bez2Real(:,:)                   !< output matrix with Bezier
-  logical               :: reconvert_to_real, is_c, full_Jn, debug_Jn
-  integer               :: mode_n(sr%n_tor)
+  logical               :: reconvert_to_real, is_c, full_Jn, debug_Jn, check_solenoid, remove_axi_halo, enforce_kirch
+  integer               :: mode_n(sr%n_tor), k_mode, n_modes, el, iv, idx,npol_2D, mt
+  integer, allocatable  :: mode_u(:)
   real*8, allocatable   :: iel_real(:), s_real(:), phi_real(:), s_elm(:), phi_elm(:)
   integer, allocatable  :: iel_real_int(:), ielm_indexes(:)  
   real*8, allocatable   :: H1_CAR(:,:,:), H1_CAR_s(:,:,:), HZ_CAR(:,:)
-  real*8, allocatable   :: I_elec_J_complete(:), I_elec_w_complete(:)
-
+  real*8, allocatable   :: I_elec_J_complete(:), I_elec_w_complete(:), i_elec_tor_J(:), i_elec_tor_w(:), i_elec_J_new(:), i_elec_w_new(:)
+  real*8, allocatable   :: Jn_four_coeff(:,:), Jn_four_vec(:)
+  complex*16, allocatable:: Jn_coeff_c(:,:), Jn_four_c_vec(:), i_halo_int_c(:), jphi_c(:,:), i_plasma_int_c(:)
+  type(type_element)    :: element 
+  type (type_node)      :: nodes(n_vertex_max)
+  real*8                :: zj0(element_list%n_elements,n_gauss, n_gauss, n_plane ), xjac, wgauss_copy(n_gauss), wst
+  real*8                :: x_g(element_list%n_elements,n_gauss, n_gauss), x_s(element_list%n_elements,n_gauss, n_gauss), x_t(element_list%n_elements,n_gauss, n_gauss), y_s(element_list%n_elements,n_gauss, n_gauss), y_t(element_list%n_elements,n_gauss, n_gauss)
+  real*8                :: jphi(element_list%n_elements*n_gauss*n_gauss*n_plane), jphi_dim(element_list%n_elements*n_gauss*n_gauss*n_plane,1)
+  complex*16            :: i_cplx
+  integer               :: n_tor_elec_J, n_tor_elec_w, n_pol_elec_J, n_pol_elec_w
   if (my_id .eq. 0) write(*,*) 'Inside get_Ielec_halo'
 
-
+  
+  !!!!!!  TESTING !!!!!!!!!
   ! Reconvert for debugging?
   reconvert_to_real = .false.
-
   ! Compute full current or implement harmonic beat frequency mitigation (ONLY GAUSS)
-  full_Jn = .true.
-
+  full_Jn = .true.  !!!!!!!!!! LEAVE TO TRUE FOR CONSISTENCY !!!!!!!!!!!!!!!!
   ! Debugging
-  debug_Jn = .false.
+  debug_Jn = .true.
+  ! Check solenoidality
+  check_solenoid = .false.
+  ! Remove axisymmetry from electrode currents
+  remove_axi_halo = .false.
+  if (my_id .eq. 0) then 
+    if (remove_axi_halo) write(*,*) 'Removing axisymmetric components from halo currents'
+  endif
+  ! Enforce Kirchhoff law to numerical precision
+  enforce_kirch = .false.
+  if (my_id .eq. 0) then 
+    if (enforce_kirch) write(*,*) 'Electrodes: Enforcing Kirchhoff law to numerical precision'
+  endif
   
+  ! FACT_MU0
   fact_mu0 = 1.d0/mu_zero
 
   ! Define electrode currents (complete and full rank)
@@ -1459,6 +1559,7 @@ module vacuum
 
     case ('gauss') 
       nsub_ctrl = n_gauss
+      if (my_id.eq.0) write(*,*) 'n_gauss = ', n_gauss
       nctrl = bnd_elm_list%n_bnd_elements * nsub_ctrl * n_plane
       npol  = nctrl / n_plane
 
@@ -1484,7 +1585,7 @@ module vacuum
   if (ALLOCATED(zj_0_mat)) deallocate(zj_0_mat)   
   if (ALLOCATED(J_normal_temp)) deallocate(J_normal_temp)
   if (ALLOCATED(J_normal)) deallocate(J_normal)
-  if (ALLOCATED(J_normal)) deallocate(J_normal)
+  if (ALLOCATED(J_normal2)) deallocate(J_normal2)
   if (ALLOCATED(J_normal_mat)) deallocate(J_normal_mat)
   if (ALLOCATED(Jn_bez)) deallocate(Jn_bez)
   if (ALLOCATED(Jn_bez_mat)) deallocate(Jn_bez_mat)
@@ -1506,10 +1607,10 @@ module vacuum
       fourier_zj_0(nsub_ctrl,1),  psi_s_0(nsub_ctrl*n_plane)  , zj_0(nsub_ctrl*n_plane), &
       psi_s_0_mat(nsub_ctrl*n_plane,1), zj_0_mat(nsub_ctrl*n_plane,1), Jn_back2real(nctrl), &
       R(nsub_ctrl), Z(nsub_ctrl), R_s(nsub_ctrl), Z_s(nsub_ctrl), R_global(nctrl), Z_global(nctrl), phi_global(nctrl), &
-      J_normal_temp(nsub_ctrl*n_plane) , J_normal(nctrl), J_normal_rescale(nctrl),J_normal_mat(nctrl,1), Jn_bez(n_dof_bnd*sr%n_tor) , Jn_bez_mat(n_dof_bnd*sr%n_tor,1), Bez2Real(nctrl, n_dof_bnd*sr%n_tor)   )
+      J_normal_temp(nsub_ctrl*n_plane) , J_normal(nctrl), J_normal2(nctrl), J_normal_rescale(nctrl),J_normal_mat(nctrl,1), Jn_bez(n_dof_bnd*sr%n_tor) , Jn_bez_mat(n_dof_bnd*sr%n_tor,1), Bez2Real(nctrl, n_dof_bnd*sr%n_tor)   )
 
       
-      J_normal = 0.d0 ; J_normal_rescale=0.d0; Jn_bez = 0.d0; Jn_bez_mat = 0.d0; J_normal_mat=0.d0 ; Bez2Real = 0.d0; Jn_back2real=0.d0
+      J_normal = 0.d0 ; J_normal2=0.d0; J_normal_rescale=0.d0; Jn_bez = 0.d0; Jn_bez_mat = 0.d0; J_normal_mat=0.d0 ; Bez2Real = 0.d0; Jn_back2real=0.d0
       R_global = 0.d0; Z_global = 0.d0; phi_global = 0.d0
 
     case ('gauss') 
@@ -1519,10 +1620,10 @@ module vacuum
       fourier_zj_0(nsub_ctrl,1),  psi_s_0(nsub_ctrl*n_plane)  , zj_0(nsub_ctrl*n_plane), &
       psi_s_0_mat(nsub_ctrl*n_plane,1), zj_0_mat(nsub_ctrl*n_plane,1), Jn_back2real(nctrl), &
       R(nsub_ctrl), Z(nsub_ctrl), R_s(nsub_ctrl), Z_s(nsub_ctrl), R_global(nctrl), Z_global(nctrl), phi_global(nctrl), &
-      J_normal_temp(nsub_ctrl*n_plane) , J_normal(nctrl), J_normal_rescale(nctrl), J_normal_mat(nctrl,1), Jn_bez(n_dof_bnd*sr%n_tor) , Jn_bez_mat(n_dof_bnd*sr%n_tor,1), Bez2Real(nctrl, n_dof_bnd*sr%n_tor)   )
+      J_normal_temp(nsub_ctrl*n_plane) , J_normal(nctrl), J_normal2(nctrl), J_normal_rescale(nctrl), J_normal_mat(nctrl,1), Jn_bez(n_dof_bnd*sr%n_tor) , Jn_bez_mat(n_dof_bnd*sr%n_tor,1), Bez2Real(nctrl, n_dof_bnd*sr%n_tor)   )
 
       
-      J_normal = 0.d0 ; J_normal_rescale=0.d0; Jn_bez = 0.d0; Jn_bez_mat = 0.d0; J_normal_mat=0.d0 ; Bez2Real = 0.d0; Jn_back2real=0.d0
+      J_normal = 0.d0 ; J_normal2 = 0.d0; J_normal_rescale=0.d0; Jn_bez = 0.d0; Jn_bez_mat = 0.d0; J_normal_mat=0.d0 ; Bez2Real = 0.d0; Jn_back2real=0.d0
       R_global = 0.d0; Z_global = 0.d0; phi_global = 0.d0
 
   end select
@@ -1596,14 +1697,14 @@ module vacuum
             Z_s(:)   = Z_s(:)  + node_k%x(1,k_dir,2) * k_size * H1_s(k_vertex,k_dof,:)
 
             do mp=1,n_plane
-              do in=1,sr%n_tor
-                psi_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = psi_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(sr%i_tor(in),k_dir,1) * k_size*H1_s(k_vertex,k_dof,:) * HZ(sr%i_tor(in),mp)
-                zj   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)   = zj   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(sr%i_tor(in),k_dir,3) * k_size*H1(k_vertex,k_dof,:) * HZ(sr%i_tor(in),mp)
+              do in=1,n_tor  ! USING JOREK HARMONICS!!!!! AND NOT STARWALL
+                psi_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = psi_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,1) * k_size*H1_s(k_vertex,k_dof,:) * HZ(in,mp)
+                zj   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)   = zj   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,3) * k_size*H1(k_vertex,k_dof,:) * HZ(in,mp)
                 if (jorek_model > 200 ) then
-                  rho  ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = rho  ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(sr%i_tor(in),k_dir,5) * k_size*  H1(k_vertex,k_dof,:) * HZ(sr%i_tor(in),mp)
-                  rho_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = rho_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(sr%i_tor(in),k_dir,5) * k_size*H1_s(k_vertex,k_dof,:) * HZ(sr%i_tor(in),mp)
-                  T0   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = T0   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(sr%i_tor(in),k_dir,6) * k_size*  H1(k_vertex,k_dof,:) * HZ(sr%i_tor(in),mp)
-                  T0_s ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = T0_s ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(sr%i_tor(in),k_dir,6) * k_size*H1_s(k_vertex,k_dof,:) * HZ(sr%i_tor(in),mp)
+                  rho  ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = rho  ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,5) * k_size*  H1(k_vertex,k_dof,:) * HZ(in,mp)
+                  rho_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = rho_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,5) * k_size*H1_s(k_vertex,k_dof,:) * HZ(in,mp)
+                  T0   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = T0   ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,6) * k_size*  H1(k_vertex,k_dof,:) * HZ(in,mp)
+                  T0_s ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = T0_s ((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) + node_k%values(in,k_dir,6) * k_size*H1_s(k_vertex,k_dof,:) * HZ(in,mp)
                 else
                   rho = 1.d0; rho_s = 0.d0; T0 = 0.d0; T0_s = 0.d0 
                 endif        
@@ -1659,7 +1760,7 @@ module vacuum
                 endif 
               end do
             end do
-           
+            
         end select
       enddo
     enddo
@@ -1694,42 +1795,28 @@ module vacuum
 
           ! --- Computation of full normal current
 
-          do mp = 1, n_plane
+          ! do mp = 1, n_plane
 
-            J_normal_temp((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = ((zj((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) * &
-                                                          psi_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)) + &
-                                                          + R(:)**2.d0 * P0_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)) &
-                                                          /sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out
-          enddo
+          !   J_normal_temp((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) = ((zj((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) * &
+          !                                                 psi_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)) + &
+          !                                                 + R(:)**2.d0 * P0_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)) &
+          !                                                 /sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out
+          ! enddo
+
+          ! do mp = 1,n_plane ! Fill up the extended Jnorm by first going along the poloidal angle and then proceeding to next poloidal plane (along phi)
+
+          !   J_normal( (m_bndelem-1)*nsub_ctrl+1+(mp-1)*npol : m_bndelem*nsub_ctrl+(mp-1)*npol ) = J_normal_temp((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)                          
+
+          ! enddo
 
           do mp = 1,n_plane ! Fill up the extended Jnorm by first going along the poloidal angle and then proceeding to next poloidal plane (along phi)
 
-            J_normal( (m_bndelem-1)*nsub_ctrl+1+(mp-1)*npol : m_bndelem*nsub_ctrl+(mp-1)*npol ) = J_normal_temp((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)                          
+            J_normal( (m_bndelem-1)*nsub_ctrl+1+(mp-1)*npol : m_bndelem*nsub_ctrl+(mp-1)*npol ) = ((zj((mp-1)*nsub_ctrl+1:mp*nsub_ctrl) * &
+                                                                                                psi_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)) + &
+                                                                                                + R(:)**2.d0 * P0_s((mp-1)*nsub_ctrl+1:mp*nsub_ctrl)) &
+                                                                                                /sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out         
+          enddo  
 
-          enddo
-          
-          if (debug_Jn) then
-            if (my_id == 0) then
-              OPEN(UNIT=12, FILE="Jn_gauss_BEFORE_RESCALE.dat", ACTION="write", STATUS="replace")
-              DO i=1,nctrl
-                WRITE(12,*) J_normal(i)
-              END DO
-              CLOSE(12)
-            endif
-          endif
-
-          ! --- RESCALE BY 1/mu_0
-          J_normal_rescale(:) = fact_mu0 * J_normal(:)
-
-          if (debug_Jn) then
-            if (my_id == 0) then
-              OPEN(UNIT=12, FILE="Jn_gauss_AFTER_RESCALE.dat", ACTION="write", STATUS="replace")
-              DO i=1,nctrl
-                WRITE(12,*) J_normal_rescale(i)
-              END DO
-              CLOSE(12)
-            endif
-          endif
 
         else
         ! HARMONICS SEPARATION (OLD)
@@ -1787,6 +1874,208 @@ module vacuum
 
   enddo ! end bnd elements loop
 
+  if (debug_Jn) then
+    if (my_id == 0) then
+      OPEN(UNIT=12, FILE="Jn_gauss_BEFORE_RESCALE.dat", ACTION="write", STATUS="replace")
+      DO i=1,nctrl
+        WRITE(12,*) J_normal(i)
+      END DO
+      CLOSE(12)
+
+    endif
+  endif
+  ! --- RESCALE BY 1/mu_0
+  J_normal_rescale(:) = fact_mu0 * J_normal(:)
+
+  if (debug_Jn) then
+    if (my_id == 0) then
+      OPEN(UNIT=12, FILE="Jn_gauss_AFTER_RESCALE.dat", ACTION="write", STATUS="replace")
+      DO i=1,nctrl
+        WRITE(12,*) J_normal_rescale(i)
+      END DO
+      CLOSE(12)
+    endif
+  endif
+
+  ! CHECK FOR HARMONIC-BY-HARMONIC SOLENOIDALITY
+  if (check_solenoid) then
+
+    if (.not. ALLOCATED(Jn_four_coeff)) allocate(Jn_four_coeff(npol,1))
+    if (.not. ALLOCATED(Jn_coeff_c)) allocate(Jn_coeff_c(npol,1))
+    if (.not. ALLOCATED(J_normal_dim)) allocate(J_normal_dim(nctrl,1))
+    if (.not. ALLOCATED(Jn_four_c_vec)) allocate(Jn_four_c_vec(npol))   
+
+    ! Separate Fourier harmonics
+    J_normal_dim(:,1) = J_normal_rescale 
+    Jn_four_coeff(:,:) = 0.d0
+    Jn_coeff_c(:,:) = (0.d0,0.d0)
+    Jn_four_c_vec(:)   = (0.d0, 0.d0)
+
+    ! Produce array with the actual mode numbers and no repetitions (mode_n)
+    if (.not. allocated(mode_u)) allocate(mode_u(sr%n_tor))
+    k_mode=1
+    mode_u(k_mode) = mode_n(1)
+    do i = 2 , size(mode_n)
+      if (mode_n(i) .ne. mode_n(i-1) ) then 
+        k_mode = k_mode+1
+        mode_u(k_mode) = mode_n(i)
+      endif 
+    enddo 
+    mode_u = mode_u(1:k_mode)
+    n_modes=k_mode
+
+    if (.not. ALLOCATED(I_halo_int_c)) allocate(I_halo_int_C(n_modes))
+    I_halo_int_c(:)      = (0.d0,0.d0)
+
+    do i = 1, n_modes
+      write(*,*) 'size(mode_u) check =' , size(mode_u)
+      call calc_fourier_coeff_complex(J_normal_dim, n_plane, npol, mode_u(i), 1, phi, Jn_coeff_c, my_id )
+
+      ! Integrate coefficient along poloidal length
+      Jn_four_c_vec(:) = Jn_coeff_c(:,1)
+
+      do m_bndelem=1,bnd_elm_list%n_bnd_elements
+        
+        bndelem = bnd_elm_list%bnd_element(m_bndelem) ! Type bnd_element
+
+        ! Calculate radial coordinate
+        do k_vertex = 1, 2
+          do k_dof = 1, 2
+            k_node   = bndelem%vertex(k_vertex)
+            k_dir    = bndelem%direction(k_vertex,k_dof)
+            k_size   = bndelem%size(k_vertex,k_dof)
+            node_k   = node_list%node(k_node)
+            R  (:)   = R  (:)  + node_k%x(1,k_dir,1) * k_size * H1  (k_vertex,k_dof,:)
+          enddo 
+        enddo
+
+        do ms=1,nsub_ctrl
+          ! Should the jacobian still be canceled out because it compensates with dpsi/ds derivative?
+          I_halo_int_c(i) = I_halo_int_c(i) + wgauss(ms) * R(ms) * Jn_four_c_vec((m_bndelem-1)*nsub_ctrl+ms)
+        enddo
+
+      enddo !bndelem loop
+    enddo ! modes loop
+
+    ! Take Jphi in real space and convert it to Fourier
+    do el=1,element_list%n_elements
+      element = element_list%element(el)
+
+      do iv = 1, n_vertex_max
+        i_node     = element%vertex(iv)
+        call make_deep_copy_node(node_list%node(i_node), nodes(iv))
+      enddo
+      
+      ! Fill in values for R,Z and zj
+      zj0(:,:,:,:) = 0.d0
+      x_g(:,:,:)   = 0.d0 
+      x_s(:,:,:)   = 0.d0 
+      x_t(:,:,:)   = 0.d0 
+      y_s(:,:,:)   = 0.d0 
+      y_t(:,:,:)   = 0.d0
+
+      do i=1,n_vertex_max
+        do j=1,n_degrees
+          do ms=1, n_gauss
+            do mt=1, n_gauss
+              do mp=1,n_plane
+                !do in=1,n_coord_tor
+                  x_g(el,ms,mt) = x_g(el,ms,mt) + nodes(i)%x(in,j,1) * element%size(i,j) * H(i,j,ms,mt) !* HZ_coord(in,mp)
+                  x_s(el,ms,mt) = x_s(el,ms,mt) + nodes(i)%x(in,j,1) * element%size(i,j) * H_s(i,j,ms,mt) !* HZ_coord(in,mp)
+                  x_t(el,ms,mt) = x_t(el,ms,mt) + nodes(i)%x(in,j,1) * element%size(i,j) * H_t(i,j,ms,mt) !* HZ_coord(in,mp)
+                  y_s(el,ms,mt) = y_s(el,ms,mt) + nodes(i)%x(in,j,2) * element%size(i,j) * H_s(i,j,ms,mt) !* HZ_coord(in,mp)
+                  y_t(el,ms,mt) = y_t(el,ms,mt) + nodes(i)%x(in,j,2) * element%size(i,j) * H_t(i,j,ms,mt) !* HZ_coord(in,mp)
+
+                !enddo
+                do in=1,n_tor
+                  zj0(el,ms,mt,mp) = zj0(el,ms,mt,mp) + nodes(i)%values(in,j,var_zj) * element%size(i,j) * H(i,j,ms,mt)  * HZ(in,mp)
+                enddo 
+              enddo 
+            enddo 
+          enddo 
+        enddo 
+      enddo
+    enddo 
+    
+    ! Rearrange zj0 so that it's a vector scanning points first poloidally and then toroidally
+    jphi(:) = 0.d0
+    jphi_dim(:,:) = 0.d0
+
+    npol_2D = element_list%n_elements * n_gauss * n_gauss ! ARE n_gauss THE TOTAL GAUSS POINTS OR THE GAUSS POINTS PER DIRECTION?
+    do mp=1,n_plane
+      do el =1,element_list%n_elements
+        do ms=1,n_gauss 
+          do mt=1,n_gauss
+            idx = (mp-1)*npol_2D + (el-1)*n_gauss*n_gauss + (ms-1)*n_gauss + mt
+            jphi(idx) = zj0(el,ms,mt,mp) !/ x_g(el,ms,mt) It simplifies with the later multiplication?
+          enddo 
+        enddo 
+      enddo 
+    enddo
+
+    jphi_dim(:,1) = jphi(:)
+    if (.not. allocated(jphi_c)) allocate(jphi_c(npol_2D,1))
+    jphi_c = (0.d0,0.d0)
+    if (.not. ALLOCATED(I_plasma_int_c)) allocate(I_plasma_int_C(n_modes))
+    I_plasma_int_c(:)      = (0.d0,0.d0)
+
+    open(unit=12, file="jphi_dim.dat", action="write", status="replace")
+    do j = 1, npol_2D*n_plane
+      write(12,*) jphi_dim(j,1)
+    enddo 
+    close(12)
+
+    do i=1,n_modes
+
+      call calc_fourier_coeff_complex(jphi_dim, n_plane, npol_2D, mode_u(i), 1, phi, JPHI_c, my_id )
+      if (my_id .eq. 0) then
+      open(unit=12, file="jphi_c.dat", action="write", status="replace")
+      do j = 1, npol_2D
+        write(12,*) real(jphi_c(j,1)) , aimag(jphi_c(j,1))
+      enddo 
+      close(12)
+      endif
+      ! For each mode, perform the surface integral over the 2D domain 
+      do el=1,element_list%n_elements
+        do ms=1,n_gauss 
+          do mt=1,n_gauss 
+            xjac = x_s(el,ms,mt)*y_t(el,ms,mt) - x_t(el,ms,mt)*y_s(el,ms,mt)
+            !write(*,*) 'xjac = ', xjac
+            idx = (el-1)*n_gauss*n_gauss + (ms-1)*n_gauss + mt
+            wgauss_copy = wgauss
+            wst  = wgauss_copy(ms)*wgauss_copy(mt)
+            !write(*,*) 'wst = ', wst
+
+            I_plasma_int_c(i) = I_plasma_int_c(i) + wst * xjac * jphi_c(idx,1)
+          enddo 
+        enddo 
+      enddo
+      i_cplx = (0.d0,1.d0)
+      I_plasma_int_c(i) = i_cplx*i*I_plasma_int_c(i)
+    enddo
+    
+    ! PRINT THE TWO ARRAYS
+    if (my_id .eq. 0) then
+      open(unit=12, file="I_halo_int_c.dat", action="write", status="replace")
+      do i = 1, n_modes
+        write(12,*) real(I_halo_int_c(i)) , aimag(i_halo_int_c(i))
+      enddo 
+      close(12)
+    endif
+
+    if (my_id .eq. 0) then
+      open(unit=12, file="I_jphi_int_c.dat", action="write", status="replace")
+      do i = 1, n_modes
+        write(12,*) real(I_plasma_int_c(i)) , aimag(i_plasma_int_c(i))
+      enddo 
+      close(12)
+    endif
+
+
+
+  endif ! FIN SOLENOIDALITY TEST
+
+
   select case (mapping)
 
     case ('CARIDDI')
@@ -1830,8 +2119,6 @@ module vacuum
 
     case ('gauss')
 
-
-   
       J_normal_mat(:,1) = J_normal_rescale(:)
   
       ! Transform the assembled array in Bezier
@@ -1853,15 +2140,129 @@ module vacuum
         I_elec_w_complete(i) = -sum(sr%Jmat_w(i,:)*Jn_bez(:))
       end do
 
+
+      if (debug_Jn) then 
+        if (my_id.eq.0) then 
+          OPEN(UNIT=12, FILE="I_elec_J_complete.dat", ACTION="write", STATUS="replace")
+          DO i=1,sr%n_electrode_J
+            WRITE(12,*) I_elec_J_complete(i)
+          END DO
+          CLOSE(12)
+
+          OPEN(UNIT=12, FILE="I_elec_w_complete.dat", ACTION="write", STATUS="replace")
+          DO i=1,sr%n_electrode_w
+            WRITE(12,*) I_elec_w_complete(i)
+          END DO
+          CLOSE(12)
+        endif 
+      endif
+      
+      ! Enforce solenoidality of electrodes currents
+      if (enforce_kirch) then 
+        I_elec_J_complete(:) = I_elec_J_complete(:) - sum(I_elec_J_complete) / sr%n_electrode_J
+        I_elec_w_complete(:) = I_elec_w_complete(:) - sum(I_elec_w_complete) / sr%n_electrode_w
+        
+        if (my_id.eq.0) then 
+          if (debug_Jn) then 
+            OPEN(UNIT=12, FILE="I_elec_J_complete_Kirchhoff.dat", ACTION="write", STATUS="replace")
+            DO i=1,sr%n_electrode_J
+              WRITE(12,*) I_elec_J_complete(i)
+            END DO
+            CLOSE(12)
+
+            OPEN(UNIT=12, FILE="I_elec_w_complete_Kirchhoff.dat", ACTION="write", STATUS="replace")
+            DO i=1,sr%n_electrode_w
+              WRITE(12,*) I_elec_w_complete(i)
+            END DO
+            CLOSE(12)
+          endif
+        endif
+      endif
+      
+      ! CLEANUP AXISYMMETRIC COMPONENT FROM HALO CURRENTS
+      if (remove_axi_halo) then ! For now, only valid for an all-plastered shell, where n_electrodes=n_bnd_elements
+        
+        ! Take chunks of size n_tor
+        n_tor_elec_J = 40
+        n_tor_elec_w = 40
+        n_pol_elec_J = sr%n_electrode_J/n_tor_elec_J 
+        n_pol_elec_w = sr%n_electrode_w/n_tor_elec_w
+
+        if (.not. allocated(i_elec_tor_J)) allocate(i_elec_tor_J(n_tor_elec_J))
+        if (.not. allocated(i_elec_tor_w)) allocate(i_elec_tor_w(n_tor_elec_w))
+        if (.not. allocated(I_elec_J_new)) allocate(I_elec_J_new(sr%n_electrode_J))
+        i_elec_J_new(:) = 0.d0
+        if (.not. allocated(I_elec_w_new)) allocate(I_elec_w_new(sr%n_electrode_w))
+        i_elec_w_new(:) = 0.d0
+        
+        ! SHELL
+        ! Identify a poloidal location
+        do i = 1,n_pol_elec_J
+          ! Initialize array of toroidal currents to 0
+          i_elec_tor_j(:) = 0.d0
+
+          do j =1,n_tor_elec_J 
+            i_elec_tor_J(j) = I_elec_J_complete((j-1) * n_pol_elec_J + i) 
+          enddo 
+
+          ! Subtract by mean value
+          i_elec_tor_j = i_elec_tor_J - (  sum(I_elec_tor_J) / real(n_tor_elec_J) )
+
+          ! Put the values back in the main array 
+          do j=1,n_tor_elec_J
+            I_elec_J_new ((j-1) * n_pol_elec_J + i) = i_elec_tor_J(j)
+          enddo 
+
+        enddo  
+        
+        ! WALL
+        do i = 1,n_pol_elec_w
+          ! Initialize array of toroidal currents to 0
+          i_elec_tor_w(:) = 0.d0
+
+          do j =1,n_tor_elec_w 
+            i_elec_tor_w(j) = I_elec_w_complete((j-1) * n_pol_elec_w + i) 
+          enddo 
+
+          ! Subtract by mean value
+          i_elec_tor_w = i_elec_tor_w - (  sum(I_elec_tor_w) / real(n_tor_elec_w) )
+
+          ! Put the values back in the main array 
+          do j=1,n_tor_elec_w
+            I_elec_w_new ((j-1) * n_pol_elec_w + i) = i_elec_tor_w(j)
+          enddo 
+
+        enddo  
+
+        I_elec_J_complete = I_elec_J_new
+        I_elec_w_complete = I_elec_w_new
+
+        if (my_id.eq.0) then 
+          if (debug_Jn) then 
+            OPEN(UNIT=12, FILE="I_elec_J_complete_WO_AXI.dat", ACTION="write", STATUS="replace")
+            DO i=1,sr%n_electrode_J
+              WRITE(12,*) I_elec_J_complete(i)
+            END DO
+            CLOSE(12)
+
+            OPEN(UNIT=12, FILE="I_elec_w_complete_WO_AXI.dat", ACTION="write", STATUS="replace")
+            DO i=1,sr%n_electrode_w
+              WRITE(12,*) I_elec_w_complete(i)
+            END DO
+            CLOSE(12)
+          endif
+        endif
+
+      endif
+
       I_elec_J = I_elec_J_complete(1:sr%n_electrode_J-1)
       I_elec_w = I_elec_w_complete(1:sr%n_electrode_w-1)
-
 
       if (debug_Jn) then
 
         !Debugging
         if (my_id == 0) then
-          OPEN(UNIT=12, FILE="Jn_gauss.dat", ACTION="write", STATUS="replace")
+          OPEN(UNIT=12, FILE="Jn_gauss_from_Ielec_halo.dat", ACTION="write", STATUS="replace")
           DO i=1,nctrl
             WRITE(12,*) J_normal(i)
           END DO
@@ -1869,24 +2270,14 @@ module vacuum
         endif
 
         if (my_id == 0) then
-          OPEN(UNIT=12, FILE="Jn_bez.dat", ACTION="write", STATUS="replace")
+          OPEN(UNIT=12, FILE="Jn_bez_from_Ielec_halo.dat", ACTION="write", STATUS="replace")
           DO i=1,n_dof_bnd*sr%n_tor
             WRITE(12,*) Jn_bez(i)
           END DO
           CLOSE(12)
         endif
+        
 
-        OPEN(UNIT=12, FILE="I_elec_J_complete.dat", ACTION="write", STATUS="replace")
-        DO i=1,sr%n_electrode_J
-          WRITE(12,*) I_elec_J_complete(i)
-        END DO
-        CLOSE(12)
-
-        OPEN(UNIT=12, FILE="I_elec_w_complete.dat", ACTION="write", STATUS="replace")
-        DO i=1,sr%n_electrode_w
-          WRITE(12,*) I_elec_w_complete(i)
-        END DO
-        CLOSE(12)
       endif
 
       if (reconvert_to_real) then
@@ -1975,7 +2366,6 @@ module vacuum
           Jn_back2real(i) = sum( Bez2Real(i,:) * Jn_bez(:) )
         enddo
 
-      
         if (my_id == 0) then
           OPEN(UNIT=12, FILE="Jn_back2real.dat", ACTION="write", STATUS="replace")
           DO i=1,nctrl
@@ -1984,11 +2374,279 @@ module vacuum
           CLOSE(12)
         endif
 
-
       endif ! reconvert2real
   end select
   if (my_id .eq. 0) write(*,*) 'Finished get_Ielec_halo'
   end subroutine get_Ielec_halo
+  
+  subroutine halo_time_stepping(my_id, node_list, element_list, bnd_elm_list, bnd_node_list, response_R_zj, response_R_psis, jn_bez, debug, dzjbnd_vec, dpsibnd_vec,dIelec_w, Ielec_w_now, dIelec_J, Ielec_J_now)
+
+  use data_structure
+  use gauss
+  use mod_settings
+  use phys_module, only:  PI, n_period, F0
+  use basis_at_gaussian, only: H1, H1_s, HZ
+  use constants, only: MU_ZERO
+  use mod_basisfunctions
+
+  integer,                      intent(in)    :: my_id                !< MPI process ID
+  type (type_node_list),        intent(in)    :: node_list
+  type (type_element_list),     intent(in)    :: element_list
+  type (type_bnd_element_list), intent(in)    :: bnd_elm_list   
+  type (type_bnd_node_list),    intent(in)    :: bnd_node_list
+  real*8,                       intent(out)   :: response_R_zj(:,:)
+  real*8,                       intent(out)   :: response_R_psis(:,:)
+  real*8,                       intent(out)   :: jn_bez(:)
+  logical,                      intent(in)    :: debug
+  real*8, OPTIONAL,             intent(in)    :: dzjbnd_vec(:)
+  real*8, OPTIONAL,             intent(in)    :: dpsibnd_vec(:)
+  real*8, OPTIONAL,             intent(out)   :: dIelec_w(:)
+  real*8, OPTIONAL,             intent(out)   :: Ielec_w_now(:)
+  real*8, OPTIONAL,             intent(out)   :: dIelec_J(:)
+  real*8, OPTIONAL,             intent(out)   :: Ielec_J_now(:)
+
+  !> LOCAL VARIABLES
+  real*8              :: deltaJn(sr%nd_bez), deltaIelec_full(sr%n_electrode_w), Ielec_now_full(sr%n_electrode_w)
+  integer             :: Npts_tot, npol,jj,mp, ms, i, j
+  real*8, allocatable :: fact_R_zj(:), fact_R_psis(:), R_zj(:,:), R_psis(:,:), J_normal(:), test_sig(:), bez_sig(:), phi_t
+  real*8, allocatable :: identity_mat(:,:), real2bez(:,:)
+  real*8   :: psi_s(n_gauss*n_plane), zj(n_gauss*n_plane), R(n_gauss), Z(n_gauss), R_s(n_gauss), Z_s(n_gauss),vec_inside(2), grad_t(2), G(4, n_degrees)
+  real*8   :: phi_vec(n_plane), R_c, Z_c
+  type(type_bnd_element) :: bndelem_s, bndelem_e
+  type(type_element)     :: elem_s    
+  type(type_node)        :: node_k, node_s
+  integer             :: s_bndelem, s_vertex, s_node, s_dof, s_dir, s_tor
+  real*8   :: s_size, j_size, fact_mu0, sign_out, e_size
+  integer             :: index_start_realsp, index_end_realsp, real_entry_index
+  integer             :: e_bndelem, e_vertex, e_node, e_node_bnd, e_dof, e_index, e_dir, e_tor, e_harm, e_resp
+
+
+  ! Writing transformation matrix real-space -> Bezier
+  Npts_tot = n_gauss * n_plane * bnd_elm_list%n_bnd_elements
+
+  if (.not. ALLOCATED(R_psis)) allocate(R_psis(npts_tot, sr%nd_bez))
+  if (.not. ALLOCATED(R_zj)) allocate(R_zj(npts_tot, sr%nd_bez ))
+  if (.not. ALLOCATED(fact_R_psis)) allocate(fact_R_psis(npts_tot))
+  if (.not. ALLOCATED(fact_R_zj)) allocate(fact_R_zj(npts_tot))
+  if (.not. ALLOCATED(J_normal)) allocate(J_normal(npts_tot))
+  if (.not. ALLOCATED(test_sig)) ALLOCATE(test_sig(npts_tot))
+  if (.not. ALLOCATED(bez_sig)) ALLOCATE(bez_sig(sr%nd_bez))
+      
+  npol     = bnd_elm_list%n_bnd_elements * n_gauss
+  if (my_id.eq. 0) write(*,*) 'get_delta_Ielec: NPOL =', npol
+  if (.not. allocated(identity_mat)) allocate(identity_mat(Npts_tot, Npts_tot))
+
+  identity_mat = 0.d0
+  do jj = 1 , Npts_tot
+    identity_mat(jj,jj) = 1.d0
+  end do
+  phi_vec = 0.d0
+  do mp = 1, n_plane
+    phi_vec   (mp)      = 2.d0*PI*float(mp-1)/float(n_plane) / float(n_period)
+  enddo
+  ! N.B. Real2Bez WILL BE ALLOCATED BASED ON THE NUMBER OF FREE BOUNDARY MODES IN STARWALL!    
+  call fourier(identity_mat, Npts_tot, n_plane, n_gauss, Npts_tot, phi_vec, 'gauss', Real2Bez, my_id, bnd_node_list, bnd_elm_list)
+     
+  ! Calculate real space coefficients for implicit time stepping
+  fact_R_psis = 0.d0
+  fact_R_zj   = 0.d0 
+  J_normal    = 0.d0
+  jn_bez      = 0.d0
+
+  do s_bndelem = 1,bnd_elm_list%n_bnd_elements
+    bndelem_s = bnd_elm_list%bnd_element(s_bndelem)
+    elem_s    = element_list%element(bndelem_s%element)
+    psi_s = 0.d0
+    zj    = 0.d0
+    R     = 0.d0
+    Z     = 0.d0
+    R_s   = 0.d0
+    Z_s   = 0.d0
+
+    do s_vertex = 1, 2 ! (loop over nodes in element s_bndelem)
+      do s_dof = 1, 2 ! (loop over node dofs)
+        s_node      = bndelem_s%vertex(s_vertex)
+        node_s      = node_list%node(s_node)
+        s_dir       = bndelem_s%direction(s_vertex,s_dof)
+        s_size      = bndelem_s%size(s_vertex,s_dof)
+        
+        R  (:)   = R  (:)  + node_s%x(1,s_dir,1) * s_size * H1  (s_vertex,s_dof,:)
+        Z  (:)   = Z  (:)  + node_s%x(1,s_dir,2) * s_size * H1  (s_vertex,s_dof,:)
+        R_s(:)   = R_s(:)  + node_s%x(1,s_dir,1) * s_size * H1_s(s_vertex,s_dof,:)
+        Z_s(:)   = Z_s(:)  + node_s%x(1,s_dir,2) * s_size * H1_s(s_vertex,s_dof,:)
+
+        do mp=1,n_plane
+          do s_tor = 1, n_tor ! (loop over toroidal harmonics)
+            ! Chunks of size n_gauss * n_plane
+            psi_s((mp-1)*n_gauss+1:mp*n_gauss) =    psi_s((mp-1)*n_gauss+1:mp*n_gauss) + &
+            node_s%values(s_tor,s_dir,var_psi) * s_size*H1_s(s_vertex,s_dof,:) * HZ(s_tor,mp)
+
+            zj((mp-1)*n_gauss+1:mp*n_gauss)    =    zj((mp-1)*n_gauss+1:mp*n_gauss) + &
+            node_s%values(s_tor,s_dir,var_zj) * s_size*H1(s_vertex,s_dof,:) * HZ(s_tor,mp)
+          enddo            
+        enddo
+
+      enddo
+    enddo
+
+    !---------------------- BOUNDARY ELEMENT ORIENTATION-------------------------- 
+    ! --- Calculate an inside point on the element to then calculate the
+    ! direction of bnd normals
+    vec_inside(2) = 0.d0
+    grad_t(2)     = 0.d0
+    sign_out   = 0.d0
+
+    call basisfunctions(xgauss(2),xgauss(2), G)  
+    R_c = 0.d0 ;  Z_c = 0.d0 
+    do i = 1, n_vertex_max
+      do j = 1, n_degrees
+        node_k = node_list%node(elem_s%vertex(i)) 
+        R_c    = R_c + node_k%x(1,j,1) * elem_s%size(i,j) * G(i,j)
+        Z_c    = Z_c + node_k%x(1,j,2) * elem_s%size(i,j) * G(i,j)
+      enddo
+    enddo  
+    vec_inside = (/ R_c - R(2), Z_c - Z(2) /)       ! vector pointing towards the domain
+    !--- Find out correct sign of the normal (it has to point outwards the domain)
+    grad_t     = (/ -Z_s(2) , R_s(2) /)     ! gradient of the coordinate t (normal to the boundary here) 
+    ! grad_t could point either outwards or inwards depending on the orientation of the bnd_element!
+    sign_out   = -1.d0 * sign( 1.d0, ( vec_inside(1)*grad_t(1) + vec_inside(2)*grad_t(2) ) )  ! (+1 if normal outwards)
+
+    do mp = 1, n_plane
+      index_start_realsp =  (s_bndelem-1)*n_gauss+1+(mp-1)*npol
+      index_end_realsp   =   s_bndelem*n_gauss+(mp-1)*npol
+
+      fact_R_zj (index_start_realsp : index_end_realsp)  = &
+        psi_s((mp-1)*n_gauss+1:mp*n_gauss) &
+        / sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out    
+
+      fact_R_psis (index_start_realsp : index_end_realsp)  = &
+          zj((mp-1)*n_gauss+1:mp*n_gauss) &
+          / sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out  
+                          
+      J_normal (index_start_realsp : index_end_realsp) = &
+        ( ( zj((mp-1)*n_gauss+1:mp*n_gauss) * psi_s((mp-1)*n_gauss+1:mp*n_gauss)) ) &
+                                  /sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out
+    enddo
+
+  enddo  ! end s_bndelem
+      
+
+  ! Calculate the coefficients' matrix
+  fact_mu0 = 1.d0/mu_zero
+  R_zj = 0.d0 
+  R_psis = 0.d0
+  response_R_zj = 0.d0 
+  response_R_psis = 0.d0
+
+  do e_bndelem = 1,bnd_elm_list%n_bnd_elements 
+    ! Select bnd element
+    bndelem_e = bnd_elm_list%bnd_element(e_bndelem)
+    do e_vertex = 1,2
+      e_node      = bndelem_e%vertex(e_vertex)
+      e_node_bnd  = bndelem_e%bnd_vertex(e_vertex)
+      do e_dof = 1,2
+        e_dir       = bndelem_e%direction(e_vertex,e_dof)
+        e_index     = node_list%node(e_node)%index(e_dir)
+        e_size      = bndelem_e%size(e_vertex,e_dof)
+        do e_harm = 1, sr%n_tor
+          e_tor  = sr%i_tor(e_harm)
+          ! Loop over real pts
+          do s_bndelem = 1,bnd_elm_list%n_bnd_elements
+            do mp=1,n_plane
+              do ms=1,n_gauss
+                ! Build matrices
+                real_entry_index = n_gauss*(s_bndelem-1)+ ms + (mp-1)*npol
+                ! First index to switch is the node dofs, then harmonics, the nodes
+                e_resp   = (bnd_node_list%bnd_node(e_node_bnd)%index_starwall(1) - 1)*sr%n_tor0 &
+                              + bnd_node_list%bnd_node(e_node_bnd)%n_dof*(e_harm-1)              &
+                              + bnd_node_list%bnd_node(e_node_bnd)%index_starwall(e_dof)             &
+                              - bnd_node_list%bnd_node(e_node_bnd)%index_starwall(1) + 1
+            
+                R_zj( real_entry_index, e_resp ) = &
+                      fact_mu0*fact_R_zj( real_entry_index ) &
+                    * e_size * H1(e_vertex,e_dof,ms) * HZ(e_tor,mp)                  
+
+                R_psis( real_entry_index, e_resp ) = &
+                      fact_mu0*fact_R_psis( real_entry_index ) &
+                    * e_size * H1_s(e_vertex,e_dof,ms) * HZ(e_tor,mp)
+
+              enddo 
+            enddo 
+          enddo 
+        enddo 
+      enddo 
+    enddo 
+  enddo
+
+  ! Convert the matrices to Bezier space
+  response_R_zj = MATMUL(real2bez,R_zj) 
+  response_R_psis = MATMUL(real2bez, R_psis )
+  
+  ! RESCALE J_normal for SI units! 
+  J_normal = J_normal * fact_mu0
+  ! Calculate J_normal in Bezier
+  do jj = 1,sr%nd_bez
+    Jn_bez(jj) = sum(real2bez(jj,:) * J_normal(:))
+  enddo
+
+  if (debug) then 
+    if (my_id .eq. 0) write(*,*) 'HALO TIME STEPPING: Writing J_normal_halo_time_stepping.dat'
+    open(unit=12, file="J_normal_halo_time_stepping.dat", status="replace", action="write", form="formatted")
+    do i = 1,npts_tot
+      write(12,*) J_normal(i)
+    end do
+    close(12)
+    if (my_id .eq. 0) write(*,*) 'Done writing J_normal.dat'   
+    
+   
+    if (my_id .eq. 0) write(*,*) 'HALO TIME STEPPING: Writing J_bez_halo_time_stepping.dat'
+    open(unit=12, file="J_bez_halo_time_stepping.dat", status="replace", action="write", form="formatted")
+    do i = 1,n_dof_starwall
+      write(12,*) Jn_bez(i)
+    end do
+    close(12)
+    if (my_id .eq. 0) write(*,*) 'Done writing Jn_bez.dat' 
+
+  endif
+  if (present(dIelec_w) .and. PRESENT(dIelec_J)) then 
+    deltaJn(:) = 0.d0
+    ! Get delta Jn
+    do i =1 ,sr%nd_bez
+      deltaJn(i) = sum(response_R_zj(i,:) * dzjbnd_vec(:)) + sum(response_R_psis(i,:) * dpsibnd_vec(:))
+    enddo
+    deltaIelec_full(:) = 0.d0
+    ! Get delta I_elec by using conversion matrix
+    do i =1,sr%n_electrode_w
+    deltaIelec_full(i) = -sum(sr%Jmat_w(i,:)*deltaJn(:))
+    end do
+    dIelec_w(:) = deltaIelec_full(1:sr%n_electrode_w-1)
+
+    deltaIelec_full(:) = 0.d0
+    ! Get delta I_elec by using conversion matrix
+    do i =1,sr%n_electrode_J
+    deltaIelec_full(i) = sum(sr%Jmat_J(i,:)*deltaJn(:))
+    end do
+    dIelec_J(:) = deltaIelec_full(1:sr%n_electrode_J-1)
+  endif
+
+  if (present(Ielec_w_now) .and. present(Ielec_J_now)) then 
+    ! WALL
+    Ielec_now_full(:) = 0.d0
+    Ielec_w_now(:)=0.d0 
+    do i =1,sr%n_electrode_w
+      Ielec_now_full(i) = -sum(sr%Jmat_w(i,:)*jn_bez(:))
+    end do   
+    Ielec_w_now(:) = Ielec_now_full(1:sr%n_electrode_w-1)
+    ! SHELL
+    Ielec_now_full(:) = 0.d0
+    Ielec_J_now(:)=0.d0 
+    do i =1,sr%n_electrode_J
+      Ielec_now_full(i) = sum(sr%Jmat_J(i,:)*jn_bez(:))
+    end do   
+    Ielec_J_now(:) = Ielec_now_full(1:sr%n_electrode_J-1)
+  endif
+  end subroutine halo_time_stepping
+
  
   subroutine fourier(A, nctrl, ntor_f, nsub_ctrl, ndim, phi_ctrl,mapping, global ,my_id, node_list, element_list)
   use data_structure
@@ -2032,7 +2690,7 @@ module vacuum
   end subroutine fourier
 
   !< Calculate toroidal Fourier coefficients of function
-  subroutine calc_fourier_coeff_single(f, ntor_f, npol, itor_J ,ndim, phi_ctrl, fourier,my_id)
+  subroutine calc_fourier_coeff_single(f, ntor_f, npol, itor_J ,ndim, phi_ctrl, fourier, my_id)
 
     real*8,  allocatable  ::  fourier(:,:)      !< Fourier coefficient, f(npol, ndim)
     real*8,  intent(in)   ::  f(:,:)            !< function to decompose
@@ -2056,15 +2714,25 @@ module vacuum
     !< Get the right mode number
 
     mode_n = mode_number(sr%i_tor)
+    ! if (my_id .eq. 0) then
+    ! open(unit=12, file="mode_n.dat", action='write', status='replace')
+    ! do i = 1, sr%n_tor
+    !   write(12,*) mode_n(i)
+    ! enddo 
+    ! close(12)
+    ! endif
 
     !< calculate real harmonics from JOREK input
+    !if (my_id .eq. 0 ) write(*,*) 'itor_J = ', itor_J
     itor = itor_fourier(itor_J)
+    !if (my_id .eq. 0 ) write(*,*) 'itor = ', itor 
     is_c = is_c_JOREK(itor_J)
 
     fourier=0.d0
     
-  !  write(*,*) ' itor_J = ', itor_J, ', itor = ', itor, ', is_c = ', is_c, ', nharm(itor) = ', nharm(itor)
-
+    !write(*,*) ' Fourier subroutine: itor_J = ', itor_J, ', itor = ', itor, ', is_c = ', is_c, ', nharm(itor) = ', nharm(itor)
+ 
+    ! Calculate Fourier series coefficients
     do jphi = 1, ntor_f   ! toroidal slices 
        phi     =  phi_ctrl(jphi)
        i_start = (jphi-1)*npol + 1
@@ -2072,14 +2740,110 @@ module vacuum
        if(is_c) then
           fourier(:,:)   = fourier(:,:) + 2*cos(phi * mode_n(itor) )/ntor_f * f(i_start:i_end,:)
        else
-          fourier(:,:)   = fourier(:,:) - 2*sin(phi * mode_n(itor) )/ntor_f * f(i_start:i_end,:)
           ! minus from the JOREK convention, phi has to be given in realspace convention
+          fourier(:,:)   = fourier(:,:) - 2*sin(phi * mode_n(itor) )/ntor_f * f(i_start:i_end,:)
       end if
    end do
 
    if (mode_n(itor)==0) fourier=fourier/2.d0
 
   end subroutine calc_fourier_coeff_single
+
+  subroutine calc_fourier_coeff_complex(f, ntor_f, npol, i_mode ,ndim, phi_ctrl, fourier_c, my_id)
+
+  complex*16,allocatable::  fourier_c(:,:)    !< Exp. Fourier coefficient, f(npol, ndim)
+  real*8,  intent(in)   ::  f(:,:)            !< function to decompose
+                                              !< size( npol*ntor_f:ndim )
+                                              !< Ordering first in poloidal direction then in toroidal
+  integer, intent(in)   ::  npol,  ntor_f     !< # of poloidal field points, toroidal points
+  integer, intent(in)   ::  i_mode            !< mode number
+  integer, intent(in)   ::  ndim              !< second dimension of input function
+  real*8,  intent(in)   ::  phi_ctrl(:)       !< phi of control surface (in realspace convention)
+                                              !< dimension = ntor_f
+  integer, intent(in)   ::  my_id             !< MPI rank
+  
+  !<----------------Local variables ----------------------------
+  integer :: itor      !< number of harmonic in realspace convention
+  integer :: jphi, k,i, i_start, i_end, mode_n(sr%n_tor)
+  real*8  :: phi       
+  real*8,allocatable :: fourier_a(:,:), fourier_b(:,:)
+  complex*16 :: i_cplx, factor_compl
+  COMPLEX*16, allocatable :: fourier_c_ref(:,:)
+  
+  if (.not. allocated(fourier_c)) allocate(fourier_c(npol,ndim))
+  if (.not. allocated(fourier_c_ref)) allocate(fourier_c_ref(npol,ndim))
+  if (.not. allocated(fourier_a)) allocate(fourier_a(npol,ndim))
+  if (.not. allocated(fourier_b)) allocate(fourier_b(npol,ndim))
+
+  fourier_c=(0.d0,0.d0)
+  fourier_c_ref = (0.d0,0.d0)
+  i_cplx   =(0.d0,1.d0)
+  fourier_a = 0.d0
+  fourier_b = 0.d0
+
+  ! Calculate Fourier series coefficients
+  do jphi = 1, ntor_f   ! toroidal slices 
+    phi     =  phi_ctrl(jphi)
+    i_start = (jphi-1)*npol + 1
+    i_end   =  jphi   *npol
+
+
+    factor_compl = exp(-i_cplx * i_mode * phi  ) / ntor_f
+    fourier_c(:,:) = fourier_c(:,:) + factor_compl * f(i_start:i_end, :)
+
+    ! For check, compare with the trigonometric series
+    fourier_a(:,:) = fourier_a(:,:) + 2.d0*cos(phi * i_mode )/ntor_f * f(i_start:i_end,:)
+    fourier_b(:,:) = fourier_b(:,:) - 2*sin(phi * i_mode )/ntor_f * f(i_start:i_end,:)
+
+  end do
+  if (i_mode .eq. 0) then
+    fourier_a(:,:) = fourier_a(:,:) / 2.d0
+    fourier_b(:,:) = 0.d0
+  endif
+  ! Print arrays
+  ! if (i_mode .eq. 0) then 
+  !   write(*,*) 'size fourier_a=', size(fourier_a,DIM=1)
+  !   write(*,*) 'size fourier_c=', size(fourier_c,DIM=1)
+
+  !   ! a0=c0
+  !   if (my_id .eq. 0) then 
+  !     open(unit=12, file='a0.dat', action='write', status='replace')
+  !     do i = 1,size(fourier_a,DIM=1)
+  !       write(12,*) fourier_a(i,1) 
+  !     enddo 
+  !   endif 
+
+  !   if (my_id .eq. 0) then 
+  !     open(unit=12, file='c0.dat', action='write', status='replace')
+  !     do i = 1,size(fourier_c,DIM=1)
+  !       write(12,*) real(fourier_c(i,1) )
+  !     enddo 
+  !   endif
+
+  ! else  
+
+  !   ! Calculate comparison ref.
+  !   fourier_c_ref = (fourier_a -  (-i_cplx * fourier_b))/2.d0
+
+  !   if (my_id .eq. 0) then 
+  !     open(unit=12, file='cn_ref.dat', action='write', status='replace')
+  !     do i = 1,size(fourier_c_ref,DIM=1)
+  !       write(12,*) real(fourier_c_ref(i,1) ) , AIMAG(fourier_c_ref(i,1))
+  !     enddo 
+  !   endif
+
+  !   if (my_id .eq. 0) then 
+  !     open(unit=12, file='cn.dat', action='write', status='replace')
+  !     do i = 1,size(fourier_c,DIM=1)
+  !       write(12,*) real(fourier_c(i,1) ) , AIMAG(fourier_c(i,1))
+  !     enddo 
+  !   endif
+
+  ! endif
+    
+
+end subroutine calc_fourier_coeff_complex
+
 
 
   subroutine realspace2bezier(bez, f, ndim, nsub, mapping, node_list, element_list, my_id)

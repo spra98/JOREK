@@ -774,6 +774,9 @@ module vacuum_response
     ! Last parameter defines how matrix should be distributed: .false. - rowwise; .true. - columnwise
     if (CARIDDI_mode .and. halo_freeb) then
       call read_array_par(filehandle, 'yie', (/sr%n_nw, sr%nd_bez/), disp, my_id, sr%a_yie, .false. ) 
+      call read_array_par(filehandle, 'd_yieqe', (/sr%n_nw, sr%n_electrode_J-1/), disp, my_id, sr%d_yieqe, .false. ) 
+      call read_array_par(filehandle, 'e_yiwe', (/sr%n_nw, sr%n_electrode_w-1/), disp, my_id, sr%e_yiwe, .false. ) 
+      call read_array_par(filehandle, 'g_yiwe', (/sr%n_nw, sr%n_electrode_w-1/), disp, my_id, sr%g_yiwe, .false. ) 
     else
       call read_array_par    (filehandle, 'ye',       (/sr%n_w,sr%nd_bez/),    disp, my_id,  sr%a_ye,     .false.) 
     endif
@@ -833,7 +836,7 @@ module vacuum_response
      if ( sr%file_version >= 5 ) then
        call read_array_not_distr(filehandle, 'phi0_w',   (/sr%ntri_w,3/), disp, float2d=sr%phi0_w, deb=.false.)
      endif
-   end if
+    end if
 
     call MPI_FILE_CLOSE(filehandle, err)
 
@@ -844,6 +847,9 @@ module vacuum_response
     if (CARIDDI_mode .and. halo_freeb) then
       ! Change of sign (check documentation!) 
       sr%a_yie%loc_mat(:,:)= -sr%a_yie%loc_mat(:,:)* 2.d0*PI
+      sr%d_yieqe%loc_mat(:,:) = sr%d_yieqe%loc_mat(:,:) * 2.d0*PI
+      sr%e_yiwe%loc_mat(:,:) = sr%e_yiwe%loc_mat(:,:) * 2.d0*PI
+      sr%g_yiwe%loc_mat(:,:) = sr%g_yiwe%loc_mat(:,:) * 2.d0*PI
     else
       sr%a_ye%loc_mat(:,:) = sr%a_ye%loc_mat(:,:) * 2.d0*PI
     endif
@@ -2066,6 +2072,7 @@ module vacuum_response
     ! --- Local variables
     real*8, allocatable :: psibnd_vec(:)    ! Vector of the values of Psi at the boundary
     real*8, allocatable :: dpsibnd_vec(:)   ! Vector of the values of deltaPsi at the boundary
+    real*8, allocatable :: dzjbnd_vec(:)
     real*8, allocatable :: psibnd_coils(:)  ! Vector of the values of Psi_coil at the boundary
     real*8   :: amat_contrib, rhs_contrib   ! Vacuum response contribution to lhs and rhs
     real*8   :: amat_contrib_psi, amat_contrib_zj
@@ -2074,8 +2081,8 @@ module vacuum_response
     real*8   :: dA                          ! factor from definition of dA
     real*8   :: x_s(n_gauss), y_s(n_gauss)  ! values of dR/ds and dZ/ds at Gaussian points
     real*8   :: common_prefactor
-    integer  :: m_bndelem, j_bndelem, s_bndelem                   ! Boundary element index
-    type(type_bnd_element) :: bndelem_m, bndelem_j     ! Boundary element corresponding to index m_bndelem
+    integer  :: m_bndelem, j_bndelem, s_bndelem , e_bndelem                 ! Boundary element index
+    type(type_bnd_element) :: bndelem_m, bndelem_j, bndelem_e     ! Boundary element corresponding to index m_bndelem
     integer  :: ms                          ! Gauss point index
     integer  :: m_plane                     ! Toroidal plane index
     integer  :: sparsepos_jp, sparsepos_pp, sparsepos_jj  ! Position of lhs contribution in the sparse matrix
@@ -2089,17 +2096,23 @@ module vacuum_response
     !   --- Quantities related to the boundary dof contributing to the response
     integer  :: j_dof, j_dir, j_node, s_node, j_node_bnd, j_index, j_starwall, j_tor, j_col_psi, j_col_zj, j_resp, j_vertex
     integer  :: s_vertex, s_dof, s_dir, s_tor
-    real*8   :: s_size, j_size
+    real*8   :: s_size, j_size, fact_mu0, j_size1, j_size2
+    !   --- Quantities for halo coupling implicit time stepping
+    integer  :: e_node, e_node_bnd, e_dof, e_dir, e_index, e_vertex, e_harm, e_tor, real_index, e_resp
+    real*8   :: e_size
 
     integer  :: i_resp_old
 
     integer  :: i_start_pf, i_end_pf     ! Indices for PF coils
     integer  :: npts_tot, jj , mp, npol,j
-    real*8, allocatable :: identity_mat(:,:), real2bez(:,:), fact_mu0
+    real*8, allocatable :: identity_mat(:,:), real2bez(:,:)
     real*8   :: phi_vec(n_plane)
-    real*8   :: sign_out, R_c, Z_c, R(n_gauss), Z(n_gauss), R_s(n_gauss), Z_s(n_gauss), vec_inside(2), grad_t(2), G(4, n_degrees), orientations(bnd_elm_list%n_bnd_elements)
+    real*8   :: sign_out, R_c, Z_c, R(n_gauss), Z(n_gauss), R_s(n_gauss), Z_s(n_gauss), vec_inside(2), grad_t(2), G(4, n_degrees)
     real*8   :: psi_s(n_gauss*n_plane), zj(n_gauss*n_plane), czj, cpsi
-    real*8, allocatable :: fact_R_zj(:), fact_R_psis(:), R_zj(:), R_psis(:), J_normal(:), jn_bez(:), test_sig(:), bez_sig(:), phi_t
+    real*8, allocatable :: response_R_zj(:,:), response_R_psis(:,:), J_normal(:), jn_bez(:), test_sig(:), bez_sig(:), phi_t
+    real*8, allocatable :: response_m_t_h_zj(:,:) , response_m_t_h_psis(:,:)
+    real*8, ALLOCATABLE :: contrib_iwe(:), contrib_ieleq(:), contrib_yi(:), contrib_dyi(:)
+    real*8              :: dIelec_w(sr%n_electrode_w-1), dIelec_J(sr%n_electrode_J-1)
     type(type_bnd_element) :: bndelem_s
     type(type_element)     :: elem_s    
     type(type_node)        :: node_k, node_s
@@ -2109,6 +2122,7 @@ module vacuum_response
 #endif
     real*8 :: t_elaps_start, t_elaps_end !### timing ###
     logical, save  :: PF_perturbation = .true.
+    logical  :: debug_field_contrib
     integer  :: ierr,i
     real*8, allocatable :: rhs_contrib_arr(:)
     real*8, allocatable :: diag_1(:), diag_e(:), diag_el_eq(:)
@@ -2117,13 +2131,283 @@ module vacuum_response
       write(*,*) 'Skipping vacuum_boundary_integral since sr%n_tor==0.'
       return
     end if
-    
+    debug_field_contrib = .true.
     if ( vacuum_debug ) t_elaps_start = MPI_WTIME()  ! for timing
 
     if ( vacuum_debug ) write(*,*) my_id, 'Before:', sum(abs(rhs_loc)),sum(abs(a_mat%val))
 
+    if (halo_freeb) then
+    !!! R.S. > SHIFT ALL OF THIS TO A SUBROUTINE: MAKE A VERSION WHERE YOU ASSIGN DELTAZJ AND DELTAPSI AS
+    ! OPTIONAL ARGUMENTS AND A VERSION FOR THE LHS ENTRIES WHERE YOU DON'T ASSIGN THEM
+
+      if (.not. ALLOCATED(response_R_psis)) allocate(response_R_psis(sr%nd_bez, sr%nd_bez))
+      if (.not. ALLOCATED(response_R_zj)) allocate(response_R_zj(sr%nd_bez, sr%nd_bez))
+      if (.not. ALLOCATED(jn_bez)) allocate(jn_bez(sr%nd_bez))
+      if (.not. ALLOCATED(response_m_t_h_zj)) allocate(response_m_t_h_zj(sr%nd_bez, sr%nd_bez))
+      if (.not. ALLOCATED(response_m_t_h_psis)) allocate(response_m_t_h_psis(sr%nd_bez, sr%nd_bez))
+
+      call halo_time_stepping(my_id, node_list, element_list, bnd_elm_list, bnd_node_list, response_R_zj=response_R_zj, response_R_psis=response_R_psis, jn_bez=jn_bez, debug=.false.)
+      
+      ! Perform products with electrode projection matrices
+      response_m_t_h_zj(:,:) = 0.d0 
+      response_m_t_h_psis(:,:) = 0.d0
+      response_m_t_h_zj = MATMUL(response_m_t_h, response_R_zj)
+      response_m_t_h_psis = MATMUL(response_m_t_h, response_R_psis)
+
+      ! if (.not. ALLOCATED(R_psis)) allocate(R_psis(npts_tot, sr%nd_bez))
+      ! if (.not. ALLOCATED(R_zj)) allocate(R_zj(npts_tot, sr%nd_bez ))
+      ! if (.not. ALLOCATED(fact_R_psis)) allocate(fact_R_psis(npts_tot))
+      ! if (.not. ALLOCATED(fact_R_zj)) allocate(fact_R_zj(npts_tot))
+      ! if (.not. ALLOCATED(J_normal)) allocate(J_normal(npts_tot))
+      ! 
+      ! if (.not. ALLOCATED(test_sig)) ALLOCATE(test_sig(npts_tot))
+      ! if (.not. ALLOCATED(bez_sig)) ALLOCATE(bez_sig(n_dof_starwall))
+      
+      ! npol     = bnd_elm_list%n_bnd_elements * n_gauss
+      ! if (my_id.eq. 0) write(*,*) 'NPOL', npol
+      ! if (.not. allocated(identity_mat)) allocate(identity_mat(Npts_tot, Npts_tot))
+
+      ! identity_mat = 0.d0
+      ! do jj = 1 , Npts_tot
+      !   identity_mat(jj,jj) = 1.d0
+      ! end do
+      ! do mp = 1, n_plane
+      !   phi_vec   (mp)      = 2.d0*PI*float(mp-1)/float(n_plane) / float(n_period)
+      ! enddo
+      ! ! N.B. Real2Bez WILL BE ALLOCATED BASED ON THE NUMBER OF FREE BOUNDARY MODES IN STARWALL!    
+      ! call fourier(identity_mat, Npts_tot, n_plane, n_gauss, Npts_tot, phi_vec, 'gauss', Real2Bez, my_id, bnd_node_list, bnd_elm_list)
+      ! ! ! --- Write to file ---
+      ! ! if (my_id .eq. 0) write(*,*) 'Writing real2bez.dat'
+      ! ! open(unit=12, file="Real2Bez.dat", status="replace", action="write", form="formatted")
+      ! ! do i = 1,n_dof_starwall
+      ! !   write(12, '(100(1x,ES20.12))') (real2bez(i,j), j=1,npts_tot)
+      ! ! end do
+      ! ! close(12)
+      ! ! if (my_id .eq. 0) write(*,*) 'Done writing real2bez.dat'
+
+      ! ! test_sig = 0.d0
+      ! ! bez_sig  = 0.d0
+      ! ! ! Define test_sig
+      ! ! do mp = 1,n_plane
+      ! !   phi_t = 2.d0*PI*float(mp-1)/float(n_plane) / float(n_period)
+      ! !   test_sig((mp-1)*npol+1:mp*npol) = sin(phi_t)
+      ! ! enddo
+      ! ! do i = 1,n_dof_starwall
+      ! !   bez_sig(i) = sum(real2bez(i,:)*test_sig(:))
+      ! ! enddo
+
+      ! ! if (my_id .eq. 0) write(*,*) 'Writing test_sig.dat'
+      ! ! open(unit=12, file="test_sig.dat", status="replace", action="write", form="formatted")
+      ! ! do i = 1,npts_tot
+      ! !   write(12,*) test_sig(i)
+      ! ! end do
+      ! ! close(12)
+      ! ! if (my_id .eq. 0) write(*,*) 'Done writing test_sig.dat'  
+
+      ! ! if (my_id .eq. 0) write(*,*) 'Writing bez_sig.dat'
+      ! ! open(unit=12, file="bez_sig.dat", status="replace", action="write", form="formatted")
+      ! ! do i = 1,n_dof_starwall
+      ! !   write(12,*) bez_sig(i)
+      ! ! end do
+      ! ! close(12)
+      ! ! if (my_id .eq. 0) write(*,*) 'Done writing bez_sig.dat'      
+
+      ! ! Calculate real space coefficients for implicit time stepping
+      ! fact_R_psis = 0.d0
+      ! fact_R_zj   = 0.d0 
+      ! J_normal    = 0.d0
+      ! jn_bez      = 0.d0
+
+      ! do s_bndelem = 1,bnd_elm_list%n_bnd_elements
+      !   bndelem_s = bnd_elm_list%bnd_element(s_bndelem)
+      !   elem_s    = element_list%element(bndelem_s%element)
+
+      !   psi_s = 0.d0
+      !   zj    = 0.d0
+      !   R     = 0.d0
+      !   Z     = 0.d0
+      !   R_s   = 0.d0
+      !   Z_s   = 0.d0
+
+      !   do s_vertex = 1, 2 ! (loop over nodes in element s_bndelem)
+      !     do s_dof = 1, 2 ! (loop over node dofs)
+      !       s_node      = bndelem_s%vertex(s_vertex)
+      !       node_s      = node_list%node(s_node)
+      !       s_dir       = bndelem_s%direction(s_vertex,s_dof)
+      !       s_size      = bndelem_s%size(s_vertex,s_dof)
+            
+      !       R  (:)   = R  (:)  + node_s%x(1,s_dir,1) * s_size * H1  (s_vertex,s_dof,:)
+      !       Z  (:)   = Z  (:)  + node_s%x(1,s_dir,2) * s_size * H1  (s_vertex,s_dof,:)
+      !       R_s(:)   = R_s(:)  + node_s%x(1,s_dir,1) * s_size * H1_s(s_vertex,s_dof,:)
+      !       Z_s(:)   = Z_s(:)  + node_s%x(1,s_dir,2) * s_size * H1_s(s_vertex,s_dof,:)
+
+      !       do mp=1,n_plane
+      !         do s_tor = 1, n_tor ! (loop over toroidal harmonics)
+      !           ! Chunks of size n_gauss * n_plane
+      !           psi_s((mp-1)*n_gauss+1:mp*n_gauss) =    psi_s((mp-1)*n_gauss+1:mp*n_gauss) + &
+      !           node_s%values(s_tor,s_dir,var_psi) * s_size*H1_s(s_vertex,s_dof,:) * HZ(s_tor,mp)
+
+      !           zj((mp-1)*n_gauss+1:mp*n_gauss)    =    zj((mp-1)*n_gauss+1:mp*n_gauss) + &
+      !           node_s%values(s_tor,s_dir,var_zj) * s_size*H1(s_vertex,s_dof,:) * HZ(s_tor,mp)
+      !         enddo            
+      !       enddo
+
+      !     enddo
+      !   enddo
+
+      !   !---------------------- BOUNDARY ELEMENT ORIENTATION-------------------------- 
+      !   ! --- Calculate an inside point on the element to then calculate the
+      !   ! direction of bnd normals
+
+      !   vec_inside(2) = 0.d0
+      !   grad_t(2)     = 0.d0
+      !   sign_out   = 0.d0
+
+      !   call basisfunctions(xgauss(2),xgauss(2), G)  
+      !   R_c = 0.d0 ;  Z_c = 0.d0 
+      !   do i = 1, n_vertex_max
+      !     do j = 1, n_degrees
+      !       node_k = node_list%node(elem_s%vertex(i)) 
+      !       R_c    = R_c + node_k%x(1,j,1) * elem_s%size(i,j) * G(i,j)
+      !       Z_c    = Z_c + node_k%x(1,j,2) * elem_s%size(i,j) * G(i,j)
+      !     enddo
+      !   enddo  
+      !   vec_inside = (/ R_c - R(2), Z_c - Z(2) /)       ! vector pointing towards the domain
+      !   !--- Find out correct sign of the normal (it has to point outwards the domain)
+      !   grad_t     = (/ -Z_s(2) , R_s(2) /)     ! gradient of the coordinate t (normal to the boundary here) 
+      !   ! grad_t could point either outwards or inwards depending on the orientation of the bnd_element!
+      !   sign_out   = -1.d0 * sign( 1.d0, ( vec_inside(1)*grad_t(1) + vec_inside(2)*grad_t(2) ) )  ! (+1 if normal outwards)
+
+      !   do mp = 1, n_plane
+
+      !     fact_R_zj ((s_bndelem-1)*n_gauss+1+(mp-1)*npol : s_bndelem*n_gauss+(mp-1)*npol)  = &
+      !       psi_s((mp-1)*n_gauss+1:mp*n_gauss) &
+      !       / sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out    
+
+      !     fact_R_psis ((s_bndelem-1)*n_gauss+1+(mp-1)*npol : s_bndelem*n_gauss+(mp-1)*npol)  = &
+      !         zj((mp-1)*n_gauss+1:mp*n_gauss) &
+      !         / sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out  
+                              
+      !     J_normal ((s_bndelem-1)*n_gauss+1+(mp-1)*npol : s_bndelem*n_gauss+(mp-1)*npol) = &
+      !       ( ( zj((mp-1)*n_gauss+1:mp*n_gauss) * psi_s((mp-1)*n_gauss+1:mp*n_gauss)) ) &
+      !                                 /sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out
+      !   enddo
+      ! enddo
+      
+
+      ! ! Calculate the coefficients' matrix
+      ! fact_mu0 = 1.d0/mu_zero
+      ! R_zj = 0.d0 
+      ! R_psis = 0.d0
+      ! response_R_zj = 0.d0 
+      ! response_R_psis = 0.d0
+
+      ! do e_bndelem = 1,bnd_elm_list%n_bnd_elements 
+      !   ! Select bnd element
+      !   bndelem_e = bnd_elm_list%bnd_element(e_bndelem)
+      !   do e_vertex = 1,2
+      !     e_node      = bndelem_e%vertex(e_vertex)
+      !     e_node_bnd  = bndelem_e%bnd_vertex(e_vertex)
+      !     do e_dof = 1,2
+      !       e_dir       = bndelem_e%direction(e_vertex,e_dof)
+      !       e_index     = node_list%node(e_node)%index(e_dir)
+      !       e_size      = bndelem_e%size(e_vertex,e_dof)
+      !       do e_harm = 1, sr%n_tor
+      !         e_tor  = sr%i_tor(e_harm)
+      !         ! Loop over real pts
+      !         do s_bndelem = 1,bnd_elm_list%n_bnd_elements
+      !           do mp=1,n_plane
+      !             do ms=1,n_gauss
+      !               ! Build matrices
+      !               real_index = n_gauss*(s_bndelem-1)+ ms + (mp-1)*npol
+      !               ! First index to switch is the node dofs, then harmonics, the nodes
+      !               e_resp   = (bnd_node_list%bnd_node(e_node_bnd)%index_starwall(1) - 1)*sr%n_tor0 &
+      !                            + bnd_node_list%bnd_node(e_node_bnd)%n_dof*(e_harm-1)              &
+      !                            + bnd_node_list%bnd_node(e_node_bnd)%index_starwall(e_dof)             &
+      !                            - bnd_node_list%bnd_node(e_node_bnd)%index_starwall(1) + 1
+                
+      !               R_zj( real_index, e_resp ) = &
+      !                     fact_mu0*fact_R_zj( real_index ) &
+      !                   * e_size * H1(e_vertex,e_dof,ms) * HZ(e_tor,mp)                  
+
+      !               R_psis( real_index, e_resp ) = &
+      !                     fact_mu0*fact_R_psis( real_index ) &
+      !                   * e_size * H1_s(e_vertex,e_dof,ms) * HZ(e_tor,mp)
+
+      !             enddo 
+      !           enddo 
+      !         enddo 
+      !       enddo 
+      !     enddo 
+      !   enddo 
+      ! enddo
+
+      ! ! Convert the matrices to Bezier space
+      ! if (my_id .eq. 0) write(*,*) 'About to perform MATMUL from vacuum_boundary_integral...'
+      ! response_R_zj = MATMUL(real2bez,R_zj) 
+      ! response_R_psis = MATMUL(real2bez, R_psis )
+
+      !   ! if (my_id.eq.0) then 
+      !   !   open(unit=12, file="response_R_zj_0.dat", status="replace", action="write", form="formatted")
+      !   !   do i=1,sr%nd_bez
+      !   !     write(12,*) (response_R_zj(i,j), j=1,sr%nd_bez)
+      !   !   enddo 
+      !   !   close(12) 
+
+      !   !   open(unit=12, file="response_R_psis_0.dat", status="replace", action="write", form="formatted")
+      !   !   do i=1,sr%nd_bez
+      !   !     write(12,*) (response_R_psis(i,j), j=1,sr%nd_bez)
+      !   !   enddo 
+      !   !   close(12)
+      !   ! endif   
+      !   ! if (my_id.eq.1) then 
+      !   !   open(unit=12, file="response_R_zj_1.dat", status="replace", action="write", form="formatted")
+      !   !   do i=1,sr%nd_bez
+      !   !     write(12,*) (response_R_zj(i,j), j=1,sr%nd_bez)
+      !   !   enddo 
+      !   !   close(12) 
+
+      !   !   open(unit=12, file="response_R_psis_1.dat", status="replace", action="write", form="formatted")
+      !   !   do i=1,sr%nd_bez
+      !   !     write(12,*) (response_R_psis(i,j), j=1,sr%nd_bez)
+      !   !   enddo 
+      !   !   close(12)
+      !   ! endif        
+
+      ! if (my_id .eq. 0) write(*,*) 'Done performing MATMUL from vacuum_boundary_integral.'
+
+      ! RESCALE J_normal for SI units! 
+
+      ! J_normal = J_normal * fact_mu0
+      ! ! Calculate J_normal in Bezier
+      ! do jj = 1,sr%nd_bez
+      !   Jn_bez(jj) = sum(real2bez(jj,:) * J_normal(:))
+      ! enddo
+
+      ! if (my_id .eq. 0) write(*,*) 'Writing J_normal.dat'
+      ! open(unit=12, file="J_normal.dat", status="replace", action="write", form="formatted")
+      ! do i = 1,npts_tot
+      !   write(12,*) J_normal(i)
+      ! end do
+      ! close(12)
+      ! if (my_id .eq. 0) write(*,*) 'Done writing J_normal.dat'   
+
+      !       if (my_id .eq. 0) write(*,*) 'Writing J_bez.dat'
+      ! open(unit=12, file="J_bez.dat", status="replace", action="write", form="formatted")
+      ! do i = 1,n_dof_starwall
+      !   write(12,*) Jn_bez(i)
+      ! end do
+      ! close(12)
+      ! if (my_id .eq. 0) write(*,*) 'Done writing Jn_bez.dat'   
+
+    endif  ! endif halo
+
     ! --- Determine vectors of the psi and deltapsi boundary values.
-    call det_psibnd_vec(bnd_node_list, node_list, psibnd_vec, dpsibnd_vec, psibnd_coils)
+    if (halo_freeb) then 
+      call det_psibnd_vec(bnd_node_list, node_list, psibnd_vec, dpsibnd_vec, dzjbnd_vec,  psibnd_coils)
+    else 
+      call det_psibnd_vec(bnd_node_list, node_list, psibnd_vec, dpsibnd_vec,  psibnd_coils)
+    endif
 
     ! --- Calculate current source term for PF coil currents imposition
     if ( (sr%ncoil /= 0) ) then    !avoid it when using COIL_FIELD
@@ -2142,10 +2426,21 @@ module vacuum_response
     call update_response(my_id, tstep, resistive_wall)
 
     ! --- Perform the time-stepping for the wall currents.
-    if ( resistive_wall .and.  (sr%n_tor>0) ) call evolve_wall_currents(my_id, psibnd_vec, dpsibnd_vec, a_mat)
+    if ( resistive_wall .and.  (sr%n_tor>0) ) then 
+      if (.not. halo_freeb) call evolve_wall_currents(my_id, psibnd_vec, dpsibnd_vec, A_MAT=a_mat)
+      if (halo_freeb) then 
+        dIelec_w(:) = 0.d0 
+        dIelec_J(:) = 0.d0
+        call evolve_wall_currents(my_id, psibnd_vec, dpsibnd_vec, dzjbnd_vec, dIelec_w, dIelec_J, a_mat)
+      endif
+    endif
 
     ! --- Update old_dpsibnd_vec  (used for updating the wall currents in the next iteration)
     old_dpsibnd_vec(:) = dpsibnd_vec(:)
+    if (halo_freeb) then 
+      old_dIelec_J(:)   = dIelec_J(:)
+      old_dIelec_w(:)    = dIelec_w(:)
+    endif
 
     if ( vacuum_debug ) then
       write(*,*) my_id, 'psibnd_vec:  ', sum(abs(psibnd_vec)), sum(psibnd_vec)
@@ -2153,10 +2448,11 @@ module vacuum_response
     end if
 
     call boundary_check(my_id)
-    allocate(rhs_contrib_arr(n_dof_starwall))
+    if (.not. allocated(rhs_contrib_arr)) allocate(rhs_contrib_arr(n_dof_starwall))
     rhs_contrib_arr=0.0
-    fact_mu0 = 1.d0/mu_zero
+
     if (resistive_wall) then
+    if (my_id .eq. 0) write(*,*) 'Performing halo RHS products'
 
       ! ===============================  Btan (eddy + halo) ===================================== 
       if (CARIDDI_mode .and. halo_freeb) then
@@ -2187,7 +2483,65 @@ module vacuum_response
           !> corresponds to matrix V_i in documentation
           call extended_matrix_vector(my_id, -1.0d0, sr%a_eyi, response_d_b_i, &
               Yi_coils0(:), .true., rhs_contrib_arr, .true.)
-        endif          
+        endif    
+
+        if (debug_field_contrib) then   
+          ! CALCULATE THE SEPARATE CONTRIBUTIONS
+          if (.not. allocated(contrib_iwe)) allocate(contrib_iwe(n_dof_starwall))
+          contrib_iwe = 0.d0 
+          if (.not. allocated(diag_e) ) allocate(diag_e(n_wall_curr_e))
+          diag_e(:) = 1.d0
+          call extended_matrix_vector(my_id, 1.d0, sr%a_eye, diag_e, &
+                wall_curr_e(:), .true., contrib_iwe, .true.)
+
+          if (my_id .eq. 0) write(*,*) 'Writing contrib_iwe_Bez.dat'
+          open(unit=12, file="contrib_iwe_bez.dat", status="replace", action="write", form="formatted")
+          do i = 1,n_dof_starwall
+            write(12,*) contrib_iwe(i)
+          end do
+          close(12)
+
+          if (.not. allocated(contrib_ieleq)) allocate(contrib_ieleq(n_dof_starwall))
+          contrib_ieleq = 0.d0 
+          if (.not. allocated(diag_el_eq) ) allocate(diag_el_eq(sr%n_electrode_J-1))
+          diag_el_eq(:) = 1.d0
+          call extended_matrix_vector(my_id, -1.d0, sr%aeq_el, diag_el_eq, &
+                I_elec_J(:), .TRUE., contrib_ieleq, .true.)
+
+          if (my_id .eq. 0) write(*,*) 'Writing contrib_ieleq_bez.dat'
+          open(unit=12, file="contrib_ieleq_bez.dat", status="replace", action="write", form="formatted")
+          do i = 1,n_dof_starwall
+            write(12,*) contrib_ieleq(i)
+          end do
+          close(12)
+          
+          if (.not. allocated(contrib_yi) ) allocate(contrib_yi(n_dof_starwall))
+          contrib_yi=0.d0
+          if (.not. allocated(diag_1)) allocate(diag_1(n_wall_curr_i))
+          diag_1(:) = ( 1.d0 + response_d_b_i(:) )
+          call extended_matrix_vector(my_id,  1.0d0, sr%a_eyi, diag_1, &
+            wall_curr_i(:), .true., contrib_yi, .true.)
+
+          if (my_id .eq. 0) write(*,*) 'Writing contrib_yi_Bez.dat'
+          open(unit=12, file="contrib_yi_bez.dat", status="replace", action="write", form="formatted")
+          do i = 1,n_dof_starwall
+            write(12,*) contrib_yi(i)
+          end do
+          close(12)
+
+          if (.not. allocated(contrib_dyi) ) allocate(contrib_dyi(n_dof_starwall))
+          contrib_dyi=0.d0
+          call extended_matrix_vector(my_id,  1.0d0, sr%a_eyi, response_d_c_i, &
+            dwall_curr_i(:), .true., contrib_dyi, .true.)
+          if (my_id .eq. 0) write(*,*) 'Writing contrib_dyi_Bez.dat'
+          open(unit=12, file="contrib_dyi_bez.dat", status="replace", action="write", form="formatted")
+          do i = 1,n_dof_starwall
+            write(12,*) contrib_dyi(i)
+          end do
+          close(12)
+
+        endif
+    
       else
       ! ===============================  Btan (eddy) ===================================== 
 
@@ -2204,180 +2558,10 @@ module vacuum_response
             Y_coils0(:), .true., rhs_contrib_arr, .true.)
 
       endif
-
     end if
-    
-    if (halo_imp) then
-
-      ! Writing transformation matrix real-space -> Bezier
-      Npts_tot = n_gauss * n_plane * bnd_elm_list%n_bnd_elements
-
-      if (.not. ALLOCATED(R_psis)) allocate(R_psis(npts_tot))
-      if (.not. ALLOCATED(R_zj)) allocate(R_zj(npts_tot))
-      if (.not. ALLOCATED(fact_R_psis)) allocate(fact_R_psis(npts_tot))
-      if (.not. ALLOCATED(fact_R_zj)) allocate(fact_R_zj(npts_tot))
-      if (.not. ALLOCATED(J_normal)) allocate(J_normal(npts_tot))
-      if (.not. ALLOCATED(jn_bez)) allocate(jn_bez(n_dof_starwall))
-      if (.not. ALLOCATED(test_sig)) ALLOCATE(test_sig(npts_tot))
-      if (.not. ALLOCATED(bez_sig)) ALLOCATE(bez_sig(n_dof_starwall))
-      
-      npol     = bnd_elm_list%n_bnd_elements * n_gauss
-      if (my_id.eq. 0) write(*,*) 'NPOL', npol
-      if (.not. allocated(identity_mat)) allocate(identity_mat(Npts_tot, Npts_tot))
-
-      identity_mat = 0.d0
-      do jj = 1 , Npts_tot
-        identity_mat(jj,jj) = 1.d0
-      end do
-      do mp = 1, n_plane
-        phi_vec   (mp)      = 2.d0*PI*float(mp-1)/float(n_plane) / float(n_period)
-      enddo
-      ! N.B. Real2Bez WILL BE ALLOCATED BASED ON THE NUMBER OF FREE BOUNDARY MODES IN STARWALL!    
-      call fourier(identity_mat, Npts_tot, n_plane, n_gauss, Npts_tot, phi_vec, 'gauss', Real2Bez, my_id, bnd_node_list, bnd_elm_list)
-      ! ! --- Write to file ---
-      ! if (my_id .eq. 0) write(*,*) 'Writing real2bez.dat'
-      ! open(unit=12, file="Real2Bez.dat", status="replace", action="write", form="formatted")
-      ! do i = 1,n_dof_starwall
-      !   write(12, '(100(1x,ES20.12))') (real2bez(i,j), j=1,npts_tot)
-      ! end do
-      ! close(12)
-      ! if (my_id .eq. 0) write(*,*) 'Done writing real2bez.dat'
-
-      ! test_sig = 0.d0
-      ! bez_sig  = 0.d0
-      ! ! Define test_sig
-      ! do mp = 1,n_plane
-      !   phi_t = 2.d0*PI*float(mp-1)/float(n_plane) / float(n_period)
-      !   test_sig((mp-1)*npol+1:mp*npol) = sin(phi_t)
-      ! enddo
-      ! do i = 1,n_dof_starwall
-      !   bez_sig(i) = sum(real2bez(i,:)*test_sig(:))
-      ! enddo
-
-      ! if (my_id .eq. 0) write(*,*) 'Writing test_sig.dat'
-      ! open(unit=12, file="test_sig.dat", status="replace", action="write", form="formatted")
-      ! do i = 1,npts_tot
-      !   write(12,*) test_sig(i)
-      ! end do
-      ! close(12)
-      ! if (my_id .eq. 0) write(*,*) 'Done writing test_sig.dat'  
-
-      ! if (my_id .eq. 0) write(*,*) 'Writing bez_sig.dat'
-      ! open(unit=12, file="bez_sig.dat", status="replace", action="write", form="formatted")
-      ! do i = 1,n_dof_starwall
-      !   write(12,*) bez_sig(i)
-      ! end do
-      ! close(12)
-      ! if (my_id .eq. 0) write(*,*) 'Done writing bez_sig.dat'      
-
-      ! Calculate real space coefficients for implicit time stepping
-      fact_R_psis = 0.d0
-      fact_R_zj   = 0.d0 
-      J_normal    = 0.d0
-      jn_bez      = 0.d0
-
-      do s_bndelem = 1,bnd_elm_list%n_bnd_elements
-        bndelem_s = bnd_elm_list%bnd_element(s_bndelem)
-        elem_s    = element_list%element(bndelem_s%element)
-
-        psi_s = 0.d0
-        zj    = 0.d0
-        R     = 0.d0
-        Z     = 0.d0
-        R_s   = 0.d0
-        Z_s   = 0.d0
-
-        do s_vertex = 1, 2 ! (loop over nodes in element s_bndelem)
-          do s_dof = 1, 2 ! (loop over node dofs)
-            s_node      = bndelem_s%vertex(s_vertex)
-            node_s      = node_list%node(s_node)
-            s_dir       = bndelem_s%direction(s_vertex,s_dof)
-            s_size      = bndelem_s%size(s_vertex,s_dof)
-            
-            R  (:)   = R  (:)  + node_s%x(1,s_dir,1) * s_size * H1  (s_vertex,s_dof,:)
-            Z  (:)   = Z  (:)  + node_s%x(1,s_dir,1) * s_size * H1  (s_vertex,s_dof,:)
-            R_s(:)   = R_s(:)  + node_s%x(1,s_dir,1) * s_size * H1_s(s_vertex,s_dof,:)
-            Z_s(:)   = Z_s(:)  + node_s%x(1,s_dir,2) * s_size * H1_s(s_vertex,s_dof,:)
-
-            do mp=1,n_plane
-              do s_tor = 1, sr%n_tor ! (loop over toroidal harmonics)
-                ! Chunks of size n_gauss * n_plane
-                psi_s((mp-1)*n_gauss+1:mp*n_gauss) =    psi_s((mp-1)*n_gauss+1:mp*n_gauss) + &
-                node_s%values(sr%i_tor(s_tor),s_dir,var_psi) * s_size*H1_s(s_vertex,s_dof,:) * HZ(sr%i_tor(s_tor),mp)
-
-                zj((mp-1)*n_gauss+1:mp*n_gauss)    =    zj((mp-1)*n_gauss+1:mp*n_gauss) + &
-                node_s%values(sr%i_tor(s_tor),s_dir,var_zj) * s_size*H1(s_vertex,s_dof,:) * HZ(sr%i_tor(s_tor),mp)
-              enddo            
-            enddo
-
-          enddo
-        enddo
-
-        !---------------------- BOUNDARY ELEMENT ORIENTATION-------------------------- 
-        ! --- Calculate an inside point on the element to then calculate the
-        ! direction of bnd normals
-
-        vec_inside(2) = 0.d0
-        grad_t(2)     = 0.d0
-        sign_out   = 0.d0
-
-        call basisfunctions(xgauss(2),xgauss(2), G)  
-        R_c = 0.d0 ;  Z_c = 0.d0 
-        do i = 1, n_vertex_max
-          do j = 1, n_degrees
-            node_k = node_list%node(elem_s%vertex(i)) 
-            R_c    = R_c + node_k%x(1,j,1) * elem_s%size(i,j) * G(i,j)
-            Z_c    = Z_c + node_k%x(1,j,2) * elem_s%size(i,j) * G(i,j)
-          enddo
-        enddo  
-        vec_inside = (/ R_c - R(2), Z_c - Z(2) /)       ! vector pointing towards the domain
-        !--- Find out correct sign of the normal (it has to point outwards the domain)
-        grad_t     = (/ -Z_s(2) , R_s(2) /)     ! gradient of the coordinate t (normal to the boundary here) 
-        ! grad_t could point either outwards or inwards depending on the orientation of the bnd_element!
-        sign_out   = -1.d0 * sign( 1.d0, ( vec_inside(1)*grad_t(1) + vec_inside(2)*grad_t(2) ) )  ! (+1 if normal outwards)
-
-        do mp = 1, n_plane
-
-          fact_R_zj ((s_bndelem-1)*n_gauss+1+(mp-1)*npol : s_bndelem*n_gauss+(mp-1)*npol)  = &
-            psi_s((mp-1)*n_gauss+1:mp*n_gauss) &
-            / sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out    
-
-          fact_R_psis ((s_bndelem-1)*n_gauss+1+(mp-1)*npol : s_bndelem*n_gauss+(mp-1)*npol)  = &
-              zj((mp-1)*n_gauss+1:mp*n_gauss) &
-              / sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out  
-                              
-          J_normal ((s_bndelem-1)*n_gauss+1+(mp-1)*npol : s_bndelem*n_gauss+(mp-1)*npol) = &
-            ( ( zj((mp-1)*n_gauss+1:mp*n_gauss) * psi_s((mp-1)*n_gauss+1:mp*n_gauss)) ) &
-                                      /sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out
-        enddo
-
-      enddo
-      ! RESCALE J_normal for SI units!
-      J_normal = J_normal * fact_mu0
-      ! Calculate J_normal in Bezier
-      do jj = 1,sr%nd_bez
-        Jn_bez(jj) = sum(real2bez(jj,:) * J_normal(:))
-      enddo
-
-            if (my_id .eq. 0) write(*,*) 'Writing J_normal.dat'
-      open(unit=12, file="J_normal.dat", status="replace", action="write", form="formatted")
-      do i = 1,npts_tot
-        write(12,*) J_normal(i)
-      end do
-      close(12)
-      if (my_id .eq. 0) write(*,*) 'Done writing J_normal.dat'   
-
-            if (my_id .eq. 0) write(*,*) 'Writing J_bez.dat'
-      open(unit=12, file="J_bez.dat", status="replace", action="write", form="formatted")
-      do i = 1,n_dof_starwall
-        write(12,*) Jn_bez(i)
-      end do
-      close(12)
-      if (my_id .eq. 0) write(*,*) 'Done writing Jn_bez.dat'   
-
-    endif
-
-
+  
+   
+    if (my_id.eq.0) write(*,*) 'About to enter bnd integral do loops'
 
 #ifdef __GFORTRAN__
     wgauss_copy(1:4) = wgauss(1:4)
@@ -2386,18 +2570,18 @@ module vacuum_response
     !$omp parallel do                                                                                         &
     !$omp default(none)                                                                                       &    
     !$omp shared(my_id, a_mat, rhs_loc, bnd_elm_list, element_list, bnd_node_list, node_list, index_min, index_max,          &
-    !$omp   response_m_e, response_m_e_i, response_m_h, response_m_j, response_m_j_i, response_m_t_h, H1, H1_s, HZ, sr,              &
+    !$omp   response_m_e, response_m_e_i, response_m_h, response_m_j, response_m_j_i, response_m_t_h,response_m_t_h_zj,response_m_t_h_psis, H1, H1_s, HZ, sr,              &
     !$omp   bext_tan, I_coils, wall_curr, dwall_curr, psibnd_vec, dpsibnd_vec,psibnd_coils,                   &
-    !$omp  wall_curr_i, dwall_curr_i, wall_curr_e, dwall_curr_e, halo_imp, F0, npol, npts_tot, real2bez, J_normal, Jn_bez, fact_R_zj, fact_R_psis, fact_mu0,                   &
+    !$omp  wall_curr_i, dwall_curr_i, wall_curr_e, dwall_curr_e, halo_imp, F0, npol, npts_tot, response_R_zj, response_R_psis, J_normal, Jn_bez, fact_mu0,                   &
 #ifdef __GFORTRAN__
     !$omp   wgauss_copy,                                                                                      &
 #endif
     !$omp   starwall_equil_coils,  Y_coils0, Yi_coils0, rhs_contrib_arr, resistive_wall, CARIDDI_mode, halo_freeb) &
-    !$omp private(m_bndelem, j_bndelem, s_bndelem, bndelem_m, elem_s, bndelem_s, node_k, node_s, bndelem_j, x_s, y_s, l_vertex, l_dof, l_node,l_dir, l_node_bnd,                  &
+    !$omp private(m_bndelem, j_bndelem,  s_bndelem, bndelem_m, elem_s, bndelem_s, node_k, node_s, bndelem_j,  x_s, y_s, l_vertex, l_dof, l_node,l_dir, l_node_bnd,                  &
     !$omp   l_index, l_size, l_tor, l_row_j, l_row_psi, ms, dA, m_plane,common_prefactor, s_vertex, s_dof,                   &
-    !$omp   testfunc_l, i_vertex, i_dof, i_node, i_dir, s_dir, i_node_bnd, i_index, i_size, s_size, i_starwall,              &
-    !$omp   mp,R_c, Z_c, R,Z,R_s,Z_s, G, orientations,  psi_s, zj, czj, cpsi,  R_zj, R_psis,  &
-    !$omp   i_tor, i_resp, i_resp_old, i_resp_0, basfunc_i, j_node_bnd, j_dof, j_size, j_vertex, i,j,jj, j_node, s_node, j_dir,     &
+    !$omp   testfunc_l, i_vertex, i_dof, i_node, i_dir, i_node_bnd, i_index, i_size, s_size, i_starwall,              &
+    !$omp   mp,R_c, Z_c, R,Z,R_s,Z_s, G,   &
+    !$omp   i_tor, i_resp, i_resp_old, i_resp_0, basfunc_i, j_node_bnd, j_dof, j_size, j_size1, j_size2, j_vertex, i,j,jj, j_node, s_node, j_dir,     &
     !$omp   j_index, j_starwall, j_tor, s_tor, j_resp, j_col_psi, j_col_zj, sparsepos_jp, sparsepos_pp, sparsepos_jj,                        &
     !$omp   amat_contrib, rhs_contrib, amat_contrib_psi, amat_contrib_zj, blockpos_jp, blockpos_pp, ierr )                                   &
     !$omp schedule(dynamic,1) collapse(4)
@@ -2407,6 +2591,7 @@ module vacuum_response
       L_LS: do l_tor = a_mat%i_tor_min, a_mat%i_tor_max ! (loop over toroidal harmonics)
         L_LV: do l_vertex = 1, 2 ! (loop over nodes in element m_bndelem)
           L_LD: do l_dof = 1, 2 ! (loop over node dofs)
+     if (my_id .eq. 0 .and. m_bndelem.eq.1 .and. l_tor.eq.a_mat%i_tor_min .and. l_vertex.eq.1 .and. l_dof.eq.1) write(*,*) 'Inside loop'
 
             bndelem_m = bnd_elm_list%bnd_element(m_bndelem)
 
@@ -2487,25 +2672,11 @@ module vacuum_response
                     
                     ! Index of the node in the node list
                     j_node      = bnd_node_list%bnd_node(j_node_bnd)%index_jorek
-                    
-                    if (halo_imp) then
-                      ! Find boundary element to which the boundary node belongs and determine 
-                      ! if the index of the node is 1 or 2
-                      do j_bndelem = 1,bnd_elm_list%n_bnd_elements
-                        bndelem_j = bnd_elm_list%bnd_element(j_bndelem)
-                        do jj =1,2
-                          if (bndelem_j%vertex(jj) .eq. j_node ) then 
-                            j_vertex = jj 
-                          endif
-                        enddo
-                      enddo
-                    endif
-
+    
                     L_JD: do j_dof = 1, 2 ! (loop over node dofs)
 
                       j_dir       = bnd_node_list%bnd_node(j_node_bnd)%direction(j_dof)
                       j_index     = node_list%node(j_node)%index(j_dir)
-                      if (halo_imp) j_size      = bndelem_m%size(j_vertex, j_dof)
                       L_JS: do j_starwall = 1, sr%n_tor ! (loop over STARWALL harmonics)
                       
                         j_tor  = sr%i_tor(j_starwall)
@@ -2515,38 +2686,7 @@ module vacuum_response
                         j_resp   = (bnd_node_list%bnd_node(j_node_bnd)%index_starwall(1) - 1)*sr%n_tor0 &
                                  + bnd_node_list%bnd_node(j_node_bnd)%n_dof*(j_starwall-1)              &
                                  + bnd_node_list%bnd_node(j_node_bnd)%index_starwall(j_dof)             &
-                                 - bnd_node_list%bnd_node(j_node_bnd)%index_starwall(1) + 1
-                        
-                        ! Creating real space S_psi and S_zj arrays of dimension npts_tot
-                        if (halo_imp) then
-                        !if (my_id .eq. 0) write(*,*) 'Halo implicit, calculating coefficients'
-
-                          R_zj = 0.d0
-                          R_psis = 0.d0
-                           
-                          ! CALCULATE COEFFICIENTS FOR THE HALO IMPLICIT COUPLING
-                          
-                          do s_bndelem = 1,bnd_elm_list%n_bnd_elements
-                            do mp=1,n_plane
-                              do ms=1,n_gauss
-                              !if (my_id.eq.0) write(*,*) 's_bndelem,ms,mp, npol, index=', s_bndelem, ms, mp, npol, n_gauss*(s_bndelem-1)+ ms + (mp-1)*npol
-                                R_zj( n_gauss*(s_bndelem-1)+ ms + (mp-1)*npol ) = &
-                                      fact_mu0*fact_R_zj( n_gauss*(s_bndelem-1)+ ms + (mp-1)*npol ) &
-                                    * j_size * H1(j_vertex,j_dof,ms) * HZ(j_tor,mp)
-                                R_psis( n_gauss*(s_bndelem-1)+ ms + (mp-1)*npol ) = &
-                                      fact_mu0*fact_R_psis( n_gauss*(s_bndelem-1)+ ms + (mp-1)*npol ) &
-                                    * j_size * H1_s(j_vertex,j_dof,ms) * HZ(j_tor,mp)
-
-                              enddo
-                            enddo
-                          enddo
-
-                          czj = sum(real2bez(j_resp,:) * R_zj(:))
-                          cpsi = sum(real2bez(j_resp,:) * R_psis(:))
-
-                  
-                        endif  ! END OF HALO IMPLICIT IF
-                      
+                                 - bnd_node_list%bnd_node(j_node_bnd)%index_starwall(1) + 1                      
 
                         ! --- Option to switch off mode coupling due to a 3D  wall
                         if ( vacuum_decouple_modes .and. (j_tor /= i_tor) ) cycle
@@ -2565,9 +2705,19 @@ module vacuum_response
                         if (CARIDDI_mode .and. halo_freeb .and. .not. halo_imp ) then
                           amat_contrib = - common_prefactor * response_m_e_i(i_resp, j_resp)
                         elseif (CARIDDI_mode .and. halo_freeb .and. halo_imp) then
+
+                      ! if (my_id.eq.0 .and. m_bndelem.eq.1 .and. l_tor.eq.1 .and. l_vertex.eq.1 &
+                      !   .and. l_dof.eq.1 .and. i_vertex.eq.1 .and. i_dof.eq.1 .and. i_starwall.eq.1 &
+                      !   .and. j_node_bnd.eq.1 .and. j_dof.eq.1 .and. j_starwall.eq.1) write(*,*) 'Performing products for halo implicit'
+
                           amat_contrib_psi = - common_prefactor * (response_m_e_i(i_resp,j_resp) + &
-                                           response_m_t_h(i_resp,j_resp) * cpsi)
-                          amat_contrib_zj  = - common_prefactor * response_m_t_h(i_resp,j_resp) * czj
+                                           response_m_t_h_psis(i_resp,j_resp) )
+                          amat_contrib_zj  = - common_prefactor * response_m_t_h_zj(i_resp,j_resp) 
+
+                      ! if (my_id.eq.0 .and. m_bndelem.eq.1 .and. l_tor.eq.1 .and. l_vertex.eq.1 &
+                      !   .and. l_dof.eq.1 .and. i_vertex.eq.1 .and. i_dof.eq.1 .and. i_starwall.eq.1 &
+                      !   .and. j_node_bnd.eq.1 .and. j_dof.eq.1 .and. j_starwall.eq.1) write(*,*) 'Done Performing products for halo implicit'
+
                         else
                           amat_contrib = - common_prefactor * response_m_e(i_resp, j_resp)
                         endif
@@ -2632,12 +2782,9 @@ module vacuum_response
 
     if ( allocated(psibnd_vec ) ) deallocate( psibnd_vec  )
     if ( allocated(dpsibnd_vec) ) deallocate( dpsibnd_vec )
+    if (allocated(dzjbnd_vec))    deallocate( dzjbnd_vec  )
     if ( allocated(jn_bez) ) deallocate( jn_bez )
     if (allocated(J_normal)) deallocate(J_normal)
-    if (allocated(R_zj)) deallocate(R_zj)
-    if (allocated(R_psis)) deallocate(R_psis)
-    if (allocated(fact_R_zj)) deallocate(fact_R_zj)
-    if (allocated(fact_R_psis)) deallocate(fact_R_psis)
 
   end subroutine vacuum_boundary_integral
   
@@ -2689,7 +2836,7 @@ module vacuum_response
   
   
   !> Determine vectors of the psi and deltapsi values at the boundary.
-  subroutine det_psibnd_vec(bnd_node_list, node_list, psibnd_vec, dpsibnd_vec, psibnd_coils)
+  subroutine det_psibnd_vec(bnd_node_list, node_list, psibnd_vec, dpsibnd_vec, dzjbnd_vec, psibnd_coils)
 
     use data_structure, only: type_node_list, type_bnd_node_list
 
@@ -2699,6 +2846,7 @@ module vacuum_response
     type(type_node_list),     intent(in)  :: node_list      !< List of grid nodes
     type(type_bnd_node_list), intent(in)  :: bnd_node_list  !< List of boundary grid nodes
     real*8, allocatable,      intent(out) :: psibnd_vec(:)  !< Vector of Psi boundary values
+    real*8, ALLOCATABLE, optional, intent(out) :: dzjbnd_vec(:)
     real*8, allocatable,      intent(out) :: dpsibnd_vec(:) !< Vector of deltaPsi boundary values
     real*8, allocatable, optional, intent(out) :: psibnd_coils(:)!< Vector of Psi_coil boundary values
 
@@ -2718,6 +2866,12 @@ module vacuum_response
       allocate( psibnd_coils(n_dof_starwall) )
       psibnd_coils(:) = 0.d0
     end if
+
+    if (present(dzjbnd_vec)) then 
+      if (ALLOCATED(dzjbnd_vec)) deallocate(dzjbnd_vec)
+      ALLOCATE( dzjbnd_vec(n_dof_starwall))
+      dzjbnd_vec(:) = 0.d0 
+    endif
 
     ! --- Determine vector of (delta)psi boundary values.
     do jnode = 1, bnd_node_list%n_bnd_nodes       ! loop over nodes
@@ -2743,7 +2897,9 @@ module vacuum_response
 
           psibnd_vec ( j_resp ) = node_list%node(jnode_glob)%values(jtor, jdir, var_psi)
           dpsibnd_vec( j_resp ) = node_list%node(jnode_glob)%deltas(jtor, jdir, var_psi)
-
+          if (PRESENT(dzjbnd_vec)) then 
+            dzjbnd_vec(j_resp) = node_list%node(jnode_glob)%deltas(jtor, jdir, var_zj)
+          endif
           if ( (present(psibnd_coils)) .and. (allocated(I_coils)) .and. (jtor==1) .and. (.not. starwall_equil_coils) ) then
             j_resp_0 = 2*(jnode-1) + jbas
             psibnd_coils( j_resp ) = sum( bext_psi(j_resp_0,:) * I_coils(:) )
@@ -2854,6 +3010,15 @@ module vacuum_response
     if ( allocated(old_dpsibnd_vec) ) deallocate(old_dpsibnd_vec)
     allocate( old_dpsibnd_vec(n_dof_starwall) )
     old_dpsibnd_vec(:) = 0.d0
+
+    if (halo_freeb) then 
+      if (allocated(old_dIelec_w)) deallocate(old_dIelec_w)
+      allocate(old_dIelec_w(sr%n_electrode_w-1))
+      old_dIelec_w(:) = 0.d0
+      if (allocated(old_dIelec_J)) deallocate(old_dIelec_J)
+      allocate(old_dIelec_J(sr%n_electrode_J-1))
+      old_dIelec_J(:) = 0.d0
+    endif
 
     if (.not. CARIDDI_mode .and. .not. vacuum_min) call write_wall_vtk(0, resistive_wall, my_id)
     !deallocate( psibnd_vec, dpsibnd_vec )
@@ -3043,7 +3208,7 @@ module vacuum_response
   
   
   !> Perform the time-evolution of the wall currents (resistive wall).
-  subroutine evolve_wall_currents(my_id, psibnd_vec, dpsibnd_vec, a_mat)
+  subroutine evolve_wall_currents(my_id, psibnd_vec, dpsibnd_vec, dzjbnd_vec, dIelec_w, dIelec_J, a_mat)
     
     use phys_module, only: index_now, index_start, nstep, resistive_wall, time_evol_theta, time_evol_zeta, tstep
     use mpi_mod
@@ -3057,6 +3222,9 @@ module vacuum_response
     integer, intent(in) :: my_id
     real*8,  intent(in) :: psibnd_vec (n_dof_starwall) !< Vector of Psi boundary values
     real*8,  intent(in) :: dpsibnd_vec(n_dof_starwall) !< Vector of deltaPsi boundary values
+    real*8, optional, intent(in) :: dzjbnd_vec(n_dof_starwall)
+    real*8, optional, intent(out):: dIelec_w(sr%n_electrode_w-1)
+    real*8, optional, intent(out):: dIelec_J(sr%n_electrode_J-1)
     type(type_SP_MATRIX):: a_mat
     
     ! --- Local variables
@@ -3072,19 +3240,70 @@ module vacuum_response
     real *8, allocatable :: tmp_d_sii(:)
     real *8, allocatable :: inv_tmp_d_sii(:)
     real*8,  ALLOCATABLE :: diag_1(:)
+    real*8,  ALLOCATABLE :: resp_R_zj, resp_R_psis
+    real*8               :: Ielec_w_now(sr%n_electrode_w-1)
+    real*8               :: Ielec_J_now(sr%n_electrode_J-1)   
+    real*8, ALLOCATABLE  :: response_R_psis(:,:), response_R_zj(:,:), jn_bez(:) 
 
 
     if (halo_freeb .and. CARIDDI_mode) then
+
       ! ===================================================================================================
       ! ================================ EDDY + HALO COUPLING =============================================
       ! ===================================================================================================
+
+      if (my_id .eq. 0) then 
+
+        OPEN(UNIT=12, FILE="dpsibnd_vec.dat", ACTION="write", STATUS="replace")
+        DO k=1,sr%nd_bez
+          WRITE(12,*) dpsibnd_vec(k)
+        END DO
+
+        OPEN(UNIT=12, FILE="dzjbnd_vec.dat", ACTION="write", STATUS="replace")
+        DO k=1,sr%nd_bez
+          WRITE(12,*) dzjbnd_vec(k)
+        END DO
+      endif
+
+      ! Calculate deltaIel_w from deltazj and deltapsi and Iel_w at present
+      if (.not. ALLOCATED(response_R_psis)) allocate(response_R_psis(sr%nd_bez, sr%nd_bez))
+      if (.not. ALLOCATED(response_R_zj)) allocate(response_R_zj(sr%nd_bez, sr%nd_bez))
+      if (.not. ALLOCATED(jn_bez)) allocate(jn_bez(sr%nd_bez))
+
+      call halo_time_stepping(my_id, node_list, element_list, bnd_elm_list, bnd_node_list, &
+                              response_R_zj=response_R_zj, response_R_psis=response_R_psis, jn_bez=jn_bez, debug=.true., &
+                              dzjbnd_vec=dzjbnd_vec, dpsibnd_vec=dpsibnd_vec, &
+                               dIelec_w=dIelec_w, Ielec_w_now = Ielec_w_now, dIelec_J=dIelec_J, Ielec_J_now=Ielec_J_now) 
+      if (my_id .eq. 0) then 
+        OPEN(UNIT=12, FILE="I_elec_w_from_time_stepping.dat", ACTION="write", STATUS="replace")
+        DO k=1,sr%n_electrode_w-1
+          WRITE(12,*) Ielec_w_now(k)
+        END DO
+
+        OPEN(UNIT=12, FILE="delta_I_elec_w_from_time_stepping.dat", ACTION="write", STATUS="replace")
+        DO k=1,sr%n_electrode_w-1
+          WRITE(12,*) dIelec_w(k)
+        END DO
+      endif
+
 
       ! --------------------------------- INTERNAL DOFS ------------------------------------------------
 
       if  (.not. allocated(dwall_curr_i2)) allocate (dwall_curr_i2(n_wall_curr_i))
       if  (.not. allocated(dwall_curr_e2)) allocate (dwall_curr_e2(n_wall_curr_e))
-      if ( vacuum_debug ) write(*,*) 'Halo: wall_curr_i and wall_curr_e(before)', sum(abs(wall_curr_i)), sum(wall_curr_i) ,sum(abs(wall_curr_e)), sum(wall_curr_e)   
-        
+      if ( vacuum_debug ) write(*,*) 'Halo: wall_curr_i and wall_curr_e(before)', sum(abs(wall_curr_i)), sum(wall_curr_i) ,sum(abs(wall_curr_e)), sum(wall_curr_e)  
+      if ( (.not. allocated(old_dpsibnd_vec)) .or. (size(old_dpsibnd_vec,1)/= n_dof_starwall) ) then
+        if ( allocated(old_dpsibnd_vec) ) deallocate(old_dpsibnd_vec)
+        allocate( old_dpsibnd_vec(n_dof_starwall) )
+      end if 
+      if ( (.not. allocated(old_dIelec_J)) .or. (size(old_dIelec_J,1)/= sr%n_electrode_J-1) ) then
+        if ( allocated(old_dIelec_J) ) deallocate(old_dIelec_J)
+        allocate( old_dIelec_J(sr%n_electrode_J-1) )
+      end if   
+      if ( (.not. allocated(old_dIelec_w)) .or. (size(old_dIelec_w,1)/= sr%n_electrode_w-1) ) then
+        if ( allocated(old_dIelec_w) ) deallocate(old_dIelec_w)
+        allocate( old_dIelec_w(sr%n_electrode_w-1) )
+      end if      
 
       !> WARNING: The following computation of dwall_curr_2 contains the term
       !!          dwall_curr which refers to the previous time-step
@@ -3114,11 +3333,35 @@ module vacuum_response
       ! N.B. Sign change is present and accounted for in read_starwall_response!
       ! Ci_star from CARIDDI already contains a minus sign! See documentation
       !> corresponds to matrix A_i in documentation
+      if (my_id.eq.0) write(*,*) 'Calling for sr%a_yie*inv_tmp_d_sii*dpsibnd_vec'
+      !if (my_id.eq.0) write(*,*) 'Size of dpsibnd_vec and old_dpsibnd_vec', size(dpsibnd_vec) , size(old_dpsibnd_vec)
       call extended_matrix_vector(my_id, -(1.d0+zeta), sr%a_yie, inv_tmp_d_sii, &
                                 dpsibnd_vec(:), .false., dwall_curr_i, .false.) 
+
+      if (my_id.eq.0) write(*,*) "Calculating the new Di*dIelec_J contribution to wall_curr_i"
+      call extended_matrix_vector(my_id, +(1.d0+zeta), sr%d_yieqe, inv_tmp_d_sii, &
+                                dIelec_J(:), .false., dwall_curr_i, .false.) 
+      if (my_id.eq.0) write(*,*) "Calculating the new Ei*dIelec_w contribution to wall_curr_i"
+      call extended_matrix_vector(my_id, +(1.d0+zeta), sr%e_yiwe, inv_tmp_d_sii, &
+                                dIelec_w(:), .false., dwall_curr_i, .false.) 
+      if (my_id.eq.0) write(*,*) "Calculating the new Gi*dIelec_w contribution to wall_curr_i"
+      call extended_matrix_vector(my_id, tstep*theta, sr%g_yiwe, inv_tmp_d_sii, &
+                                dIelec_w(:), .false. , dwall_curr_i, .false. )
+      if (my_id.eq.0) write(*,*) "Calculating the new Gi*Ielec_w contribution to wall_curr_i"
+      call extended_matrix_vector(my_id, tstep, sr%g_yiwe, inv_tmp_d_sii, &
+                                Ielec_w_now(:), .false. , dwall_curr_i, .false. )
+
+      if (my_id.eq.0) write(*,*) 'Calling for -sr%d_yieqe*inv_tmp_d_sii*old_dIelec_J'                                
+      call extended_matrix_vector(my_id, -zeta, sr%d_yieqe, inv_tmp_d_sii, &
+                                old_dIelec_J(:), .false. , dwall_curr_i, .false. )
+      if (my_id.eq.0) write(*,*) 'Calling for -sr%e_yiwe*inv_tmp_d_sii*old_dIelec_w'                                
+      call extended_matrix_vector(my_id, -zeta, sr%e_yiwe, inv_tmp_d_sii, &
+                                old_dIelec_w(:), .false. , dwall_curr_i, .false. )
+      if (my_id.eq.0) write(*,*) 'Calling for sr%a_yie*inv_tmp_d_sii*old_dpsibnd_vec'                                
       !> corresponds to matrix D_i in documentation
       call extended_matrix_vector(my_id, zeta, sr%a_yie, inv_tmp_d_sii, &
                                 old_dpsibnd_vec(:), .false., dwall_curr_i, .true.) 
+      !if (my_id.eq.0) write(*,*) 'DONE Calling for sr%a_yie*inv_tmp_d_sii*old_dpsibnd_vec' 
 
       if (my_id .eq. 0) then
         write(22,*) 'M_yie: infos', sr%a_yie%distrib, sr%a_yie%row_wise, sr%a_yie%ind_start, sr%a_yie%ind_end, sr%a_yie%step
@@ -3128,35 +3371,18 @@ module vacuum_response
       dwall_curr_i(:) = dwall_curr_i(:) + dwall_curr_i2(:)
       if (index_now <= 1 ) dwall_curr_i = 0.d0
       wall_curr_i(:) = wall_curr_i(:) + dwall_curr_i(:) 
+      if (my_id == 0) then
+        OPEN(UNIT=12, FILE="wall_curr_i.dat", ACTION="write", STATUS="replace")
+        DO k=1,n_wall_curr_i
+            WRITE(12,*) wall_curr_i(k)
+        END DO
+        CLOSE(12)  
+      endif
 
       ! ------------------------------------  CROSSING DOFS ------------------------------------------------
 
       ! Get electrode current from Jn
-      call get_Ielec_halo(node_list, element_list, bnd_elm_list, bnd_node_list, 'gauss', my_id, a_mat%i_tor_min, a_mat%i_tor_max)
-      if (my_id .eq. 0) then
-      OPEN(UNIT=12, FILE="I_elec_w_after0.dat", ACTION="write", STATUS="replace")
-      DO k=1,sr%n_electrode_w-1
-        WRITE(12,*) I_elec_w(k)
-      END DO
-      CLOSE(12)
-            OPEN(UNIT=12, FILE="I_elec_J_after0.dat", ACTION="write", STATUS="replace")
-      DO k=1,sr%n_electrode_J-1
-        WRITE(12,*) I_elec_J(k)
-      END DO
-      CLOSE(12)
-      endif
-            if (my_id .eq. 1) then
-      OPEN(UNIT=12, FILE="I_elec_w_after1.dat", ACTION="write", STATUS="replace")
-      DO k=1,sr%n_electrode_w-1
-        WRITE(12,*) I_elec_w(k)
-      END DO
-      CLOSE(12)
-            OPEN(UNIT=12, FILE="I_elec_J_after1.dat", ACTION="write", STATUS="replace")
-      DO k=1,sr%n_electrode_J-1
-        WRITE(12,*) I_elec_J(k)
-      END DO
-      CLOSE(12)
-      endif
+      !call get_Ielec_halo(node_list, element_list, bnd_elm_list, bnd_node_list, 'gauss', my_id, a_mat%i_tor_min, a_mat%i_tor_max)
 
 
       ! iwe = (FwtFw)^-1 * iel_w
@@ -3167,12 +3393,39 @@ module vacuum_response
       endif
       
       ! Initialize to 0.d0 at each time step before computing
+      if (.not. allocated(I_elec_J)) ALLOCATE(I_elec_J(sr%n_electrode_J-1))
+      I_elec_J = 0.d0
+      if (.not. allocated(I_elec_w)) ALLOCATE(I_elec_w(sr%n_electrode_w-1))
+      I_elec_w = 0.d0 
+
+      I_elec_w(:) = Ielec_w_now
+      I_elec_J(:) = Ielec_J_now
       wall_curr_e(:) = 0.d0
 
       if (.not. allocated(diag_1)) ALLOCATE(diag_1(n_wall_curr_e))
       diag_1(:) = 1.d0
       call extended_matrix_vector(my_id, 1.d0, sr%fwtfw_inv, diag_1, &
-                                  I_elec_w, .true., wall_curr_e, .true.)         
+                                  I_elec_w, .true., wall_curr_e, .true.)  
+
+      ! Print out wall_curr_e
+      if (my_id == 0) then
+        OPEN(UNIT=12, FILE="wall_curr_e.dat", ACTION="write", STATUS="replace")
+        DO k=1,sr%n_electrode_w-1
+          WRITE(12,*) wall_curr_e(k)
+        END DO
+        CLOSE(12)      
+        OPEN(UNIT=12, FILE="I_elec_w.dat", ACTION="write", STATUS="replace")
+        DO k=1,sr%n_electrode_w-1
+          WRITE(12,*) I_elec_w(k)
+        END DO
+        CLOSE(12)
+        OPEN(UNIT=12, FILE="I_elec_J.dat", ACTION="write", STATUS="replace")
+        DO k=1,sr%n_electrode_J-1
+          WRITE(12,*) I_elec_J(k)
+        END DO
+        CLOSE(12)
+      endif
+        
 
     else
 
@@ -3727,9 +3980,9 @@ module vacuum_response
           deallocate( tmp_d_s )
 
         endif
-       ! ================================================================================================
+        ! ================================================================================================
 
-      ! ===================================== IDEAL WALL ================================================
+        ! ===================================== IDEAL WALL ================================================
 
       else ! (Ideal wall) 
 

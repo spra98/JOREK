@@ -223,6 +223,7 @@ module mod_poloidal_currents
       !--- integrate wished function over the element
       do ms = 1, n_gauss
         do mp = 1, n_plane
+          ! Jacobian cancels out with the one coming from derivatives of psi and P0
           I_halo = I_halo + wgauss(ms) * abs( ( zj(ms,mp) * psi_s(ms,mp) + R(ms)**2.d0 * P0_s(ms,mp) )/F0 )  
           I_net  = I_net  + wgauss(ms) *      ( zj(ms,mp) * psi_s(ms,mp) + R(ms)**2.d0 * P0_s(ms,mp) )/F0  
    
@@ -397,7 +398,6 @@ module mod_poloidal_currents
       do mp=1, n_plane
         P0_s_all (:,mp)     = T0_all(:,mp) * rho_s_all(:,mp) + T0_s_all(:,mp) * rho_all(:,mp)
         phi       (mp)      = 2.d0*PI*float(mp-1)/float(n_plane) / float(n_period)
-
       enddo
 
       do mp=1,n_plane
@@ -419,7 +419,5 @@ module mod_poloidal_currents
     close(i_file_all)
 
   end subroutine normal_bnd_curr
-
-
   
 end module mod_poloidal_currents
