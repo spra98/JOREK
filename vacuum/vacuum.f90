@@ -24,6 +24,7 @@ module vacuum
   integer             :: n_wall_curr                     !< Number of wall current potentials.
   integer             :: n_wall_curr_i                   !< Halo coupling: number of internal current potentials (null space)
   integer             :: n_wall_curr_e                   !< Halo coupling: number of external current potentials (range space)
+  integer             :: n_shell_curr_e
   real*8, allocatable :: wall_curr(:)                    !< Wall current potentials (\f$Y_k\f$).
   real*8, allocatable :: dwall_curr(:)                   !< Change of wall current potentials (\f$\delta Y_k\f$).
   real*8, allocatable :: wall_curr_i(:)                  !< Internal wall current potentials (\f$Yi_k\f$).
@@ -602,7 +603,7 @@ module vacuum
 
         if (halo_freeb .AND. CARIDDI_mode) then
 
-          read(file_handle) n_wall_curr_i, n_wall_curr_e, sr%n_electrode_J, sr%n_electrode_w,n_dof_starwall
+          read(file_handle) n_wall_curr_i, n_wall_curr_e, n_shell_curr_e, n_wall_curr_e,n_dof_starwall
 
           if ( allocated(wall_curr_i) ) deallocate(wall_curr_i)
           allocate( wall_curr_i(n_wall_curr_i) )
@@ -640,10 +641,10 @@ module vacuum
 
         if (halo_freeb) then 
           if ( allocated(old_dIelec_w) ) deallocate(old_dIelec_w)
-          allocate( old_dIelec_w(sr%n_electrode_w-1) )
+          allocate( old_dIelec_w(n_wall_curr_e) )
           old_dIelec_w = 0.d0 
           if ( allocated(old_dIelec_J) ) deallocate(old_dIelec_J)
-          allocate( old_dIelec_J(sr%n_electrode_J-1) )
+          allocate( old_dIelec_J(n_shell_curr_e) )
           old_dIelec_J = 0.d0 
         endif
         
@@ -733,8 +734,7 @@ module vacuum
         if (halo_freeb .and. CARIDDI_mode) then
           call HDF5_integer_reading(file_id,n_wall_curr_i,"n_wall_curr_i")
           call HDF5_integer_reading(file_id,n_wall_curr_e,"n_wall_curr_e")
-          call HDF5_integer_reading(file_id, sr%n_electrode_J, "n_electrode_J")
-          call HDF5_integer_reading(file_id, sr%n_electrode_w, "n_electrode_w")
+          call HDF5_integer_reading(file_id, n_shell_curr_e, "n_shell_curr_e")
         else
          call HDF5_integer_reading(file_id,n_wall_curr,"n_wall_curr")
        endif
@@ -777,10 +777,10 @@ module vacuum
         old_dpsibnd_vec(:) = 0.d0
         if (halo_freeb) then 
           if ( allocated(old_dIelec_w) ) deallocate(old_dIelec_w)
-          allocate( old_dIelec_w(sr%n_electrode_w-1) )
+          allocate( old_dIelec_w(n_wall_curr_e) )
           old_dIelec_w = 0.d0 
           if ( allocated(old_dIelec_J) ) deallocate(old_dIelec_J)
-          allocate( old_dIelec_J(sr%n_electrode_J-1) )
+          allocate( old_dIelec_J(n_shell_curr_e) )
           old_dIelec_J = 0.d0 
         endif
         call HDF5_array1D_reading(file_id,old_dpsibnd_vec,"old_dpsibnd_vec")
@@ -938,7 +938,7 @@ module vacuum
           end if
 
 
-          write(file_handle) n_wall_curr_i, n_wall_curr_e, sr%n_electrode_J, sr%n_electrode_w, n_dof_starwall
+          write(file_handle) n_wall_curr_i, n_wall_curr_e, n_shell_curr_e, n_dof_starwall
         
           write(file_handle) wall_curr_i(:)
         
@@ -1046,8 +1046,7 @@ module vacuum
         if (halo_freeb .AND. CARIDDI_mode) then
           call HDF5_integer_saving(file_id,n_wall_curr_i,"n_wall_curr_i"//char(0))
           call HDF5_integer_saving(file_id,n_wall_curr_e,"n_wall_curr_e"//char(0))
-          call HDF5_integer_saving(file_id,sr%n_electrode_J,"n_electrode_J"//char(0))
-          call HDF5_integer_saving(file_id,sr%n_electrode_w,"n_electrode_w"//char(0))
+          call HDF5_integer_saving(file_id,n_shell_curr_e,"n_shell_curr_e"//char(0))
         else 
          call HDF5_integer_saving(file_id,n_wall_curr,"n_wall_curr"//char(0))
         endif
@@ -1113,8 +1112,8 @@ module vacuum
 
       call HDF5_array1D_saving(file_id,old_dpsibnd_vec,n_dof_starwall,"old_dpsibnd_vec"//char(0))
       if (halo_freeb .AND. CARIDDI_mode) then  
-        call HDF5_array1D_saving(file_id,old_dIelec_J,sr%n_electrode_J-1,"old_dIelec_J"//char(0))
-        call HDF5_array1D_saving(file_id,old_dIelec_w,sr%n_electrode_w-1,"old_dIelec_w"//char(0))
+        call HDF5_array1D_saving(file_id,old_dIelec_J,n_shell_curr_e,"old_dIelec_J"//char(0))
+        call HDF5_array1D_saving(file_id,old_dIelec_w,n_wall_curr_e,"old_dIelec_w"//char(0))
       endif  
       call HDF5_integer_saving(file_id,n_coils,"n_coils"//char(0))      
       call HDF5_real_saving(file_id,current_FB_fact,'current_FB_fact'//char(0))
@@ -1172,8 +1171,7 @@ module vacuum
         end if
         call MPI_BCAST(n_wall_curr_i,1,MPI_INTEGER,0,MPI_COMM_WORLD,ierr)
         call MPI_BCAST(n_wall_curr_e,1,MPI_INTEGER,0,MPI_COMM_WORLD,ierr)
-        call MPI_BCAST(sr%n_electrode_J,1,MPI_INTEGER,0,MPI_COMM_WORLD,ierr)
-        call MPI_BCAST(sr%n_electrode_w,1,MPI_INTEGER,0,MPI_COMM_WORLD,ierr)
+        call MPI_BCAST(n_shell_curr_e,1,MPI_INTEGER,0,MPI_COMM_WORLD,ierr)
          if ( my_id == 0 ) then
           write(*,*) '*************************************'
           write(*,*) '*     Done broadcasting n_halo      *'
@@ -1229,7 +1227,7 @@ module vacuum
       if ( my_id /= 0 ) then
 
         if (halo_freeb .AND. CARIDDI_mode) then
-          if ( my_id == 0 ) then
+          if ( my_id == 1 ) then
             write(*,*) '*************************************'
             write(*,*) '* Allocating halo-related variables *'
           end if 
@@ -1244,6 +1242,10 @@ module vacuum
           
           if ( allocated(dwall_curr_e) ) deallocate(dwall_curr_e)
           allocate( dwall_curr_e(n_wall_curr_e) )
+                    if ( my_id == 1 ) then
+            write(*,*) '*************************************'
+            write(*,*) '* DONE Allocating halo-related variables *'
+          end if 
         else
           if ( allocated(wall_curr) ) deallocate(wall_curr)
           allocate( wall_curr(n_wall_curr) )
@@ -1255,12 +1257,27 @@ module vacuum
 
         if ( allocated(old_dpsibnd_vec) ) deallocate(old_dpsibnd_vec)
         allocate( old_dpsibnd_vec(n_dof_starwall) )
-        if (halo_freeb .AND. CARIDDI_mode) then    
+        if (halo_freeb .AND. CARIDDI_mode) then  
+                            if ( my_id == 1 ) then
+            write(*,*) '*****************************************'
+            write(*,*) '* Allocating old_dIelec_J, old_dIelec_w *'
+          end if   
           if ( allocated(old_dIelec_J) ) deallocate(old_dIelec_J)
-          allocate( old_dIelec_J(sr%n_electrode_J-1) )
+          allocate( old_dIelec_J(n_shell_curr_e) )
           if ( allocated(old_dIelec_w) ) deallocate(old_dIelec_w)
-          allocate( old_dIelec_w(sr%n_electrode_w-1) )
+          allocate( old_dIelec_w(n_wall_curr_e) )
+                               if ( my_id == 1 ) then
+            write(*,*) '*****************************************'
+            write(*,*) '* DONE Allocating old_dIelec_J, old_dIelec_w *'
+          end if
+
         endif
+                                if ( my_id == 1 ) then
+            write(*,*) '*****************************************'
+            write(*,*) '* Allocating net_tor_wall_curr *'
+          end if
+        
+
         if ( allocated(net_tor_wall_curr) ) deallocate(net_tor_wall_curr)
         if ( allocated(diag_coil_curr) )    deallocate(diag_coil_curr)
         if ( allocated(pf_coil_curr  ) )    deallocate(pf_coil_curr)
@@ -1291,22 +1308,80 @@ module vacuum
             I_coils=0.d0
           end if
         end if
+
+                                 if ( my_id == 0 ) then
+            write(*,*) '*****************************************'
+            write(*,*) '* DONE Allocating net_tor_wall_curr part my_id = 0 *'
+          end if
+
+                                 if ( my_id == 1 ) then
+            write(*,*) '*****************************************'
+            write(*,*) '* DONE Allocating net_tor_wall_curr part my_id =1 *'
+          end if
+
       end if
 
+                                                  if ( my_id == 0 ) then
+            write(*,*) '*****************************************'
+            write(*,*) '* BEFORE wall_curr_i, wall_curr_e my_id=0 *'
+          end if
+
+                                      if ( my_id == 1 ) then
+            write(*,*) '*****************************************'
+            write(*,*) '* BEFORE wall_curr_i, wall_curr_e my_id=1*'
+          end if
+
       if (halo_freeb .AND. CARIDDI_mode) then
+                if ( my_id == 1 ) then
+            write(*,*) '*************************************'
+            write(*,*) '* Broadcasting wall_curr_i, wall_curr_e my_id=1 *'
+          end if 
+                       if ( my_id == 0 ) then
+            write(*,*) '*************************************'
+            write(*,*) '* Broadcasting wall_curr_i, wall_curr_e my_id=0 *'
+          end if 
         call MPI_BCAST(wall_curr_i,n_wall_curr_i,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
         call MPI_BCAST(dwall_curr_i,n_wall_curr_i,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
         call MPI_BCAST(wall_curr_e,n_wall_curr_e,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
         call MPI_BCAST(dwall_curr_e,n_wall_curr_e,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
+                   if ( my_id == 1 ) then
+            write(*,*) '*************************************'
+            write(*,*) '* DONE Broadcasting wall_curr_i, wall_curr_e my_id=1 *'
+          end if 
+                                 if ( my_id == 0 ) then
+            write(*,*) '*************************************'
+            write(*,*) '* DONE Broadcasting wall_curr_i, wall_curr_e my_id=0 *'
+          end if 
       else
         call MPI_BCAST(wall_curr,n_wall_curr,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
         call MPI_BCAST(dwall_curr,n_wall_curr,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
       endif
 
       call MPI_BCAST(old_dpsibnd_vec,n_dof_starwall,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr) 
-      if (halo_freeb) then 
-        call MPI_BCAST(old_dIelec_J,sr%n_electrode_J-1,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr) 
-        call MPI_BCAST(old_dIelec_w,sr%n_electrode_w-1,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr) 
+      if (halo_freeb .and. CARIDDI_mode) then 
+          if ( my_id == 1 ) then
+            write(*,*) '*************************************'
+            write(*,*) '* Broadcasting old_dIelec_J,old_dIelec_w my_id=1 *'
+            write(*,*) 'Printing n_shell_curr_e for rank 1 =' , n_shell_curr_e
+            write(*,*) 'Printing n_wall_curr_e for rank 1 =' , n_wall_curr_e
+          end if 
+          if ( my_id == 0 ) then
+            write(*,*) '*************************************'
+            write(*,*) '* Broadcasting old_dIelec_J,old_dIelec_w my_id=0 *'
+            write(*,*) 'Printing n_shell_curr_e for rank 0 =' , n_shell_curr_e
+            write(*,*) 'Printing n_wall_curr_e for rank 0 =' , n_wall_curr_e
+
+          end if
+        call MPI_BCAST(old_dIelec_J,n_shell_curr_e,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr) 
+        call MPI_BCAST(old_dIelec_w,n_wall_curr_e,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr) 
+                  if ( my_id == 1 ) then
+            write(*,*) '*************************************'
+            write(*,*) '* DONE Broadcasting old_dIelec_J,old_dIelec_w my_id=1 *'
+          end if 
+          if ( my_id == 0 ) then
+            write(*,*) '*************************************'
+            write(*,*) '* DONE Broadcasting old_dIelec_J,old_dIelec_w my_id=0 *'
+          end if
       endif
       call MPI_BCAST(wall_curr_initialized,1,MPI_LOGICAL,0,MPI_COMM_WORLD,ierr)
       if (         sz_net  > 0 ) call MPI_BCAST(net_tor_wall_curr, sz_net               ,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
@@ -1322,7 +1397,14 @@ module vacuum
     
     call MPI_BCAST(current_FB_fact,1,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
     call MPI_BCAST(dZ_axis_integral,1,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
-    
+                  if ( my_id == 1 ) then
+            write(*,*) '*************************************'
+            write(*,*) '* DONE broadcast_vacuum my_id 1 *'
+          end if 
+                          if ( my_id == 0 ) then
+            write(*,*) '*************************************'
+            write(*,*) '* DONE broadcast_vacuum my_id 0 *'
+          end if 
   end subroutine broadcast_vacuum
 
 

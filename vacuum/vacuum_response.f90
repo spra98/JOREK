@@ -1285,6 +1285,7 @@ module vacuum_response
     n_wall_curr    = sr%n_w
     n_wall_curr_i  = sr%n_nw
     n_wall_curr_e  = sr%n_electrode_w-1
+    n_shell_curr_e = sr%n_electrode_J-1
 
     ! --- Allocate matrices.
     if ( my_id /= 0 ) then
@@ -2112,7 +2113,7 @@ module vacuum_response
     real*8, allocatable :: response_R_zj(:,:), response_R_psis(:,:), J_normal(:), jn_bez(:), test_sig(:), bez_sig(:), phi_t
     real*8, allocatable :: response_m_t_h_zj(:,:) , response_m_t_h_psis(:,:)
     real*8, ALLOCATABLE :: contrib_iwe(:), contrib_ieleq(:), contrib_yi(:), contrib_dyi(:)
-    real*8              :: dIelec_w(sr%n_electrode_w-1), dIelec_J(sr%n_electrode_J-1)
+    real*8              :: dIelec_w(n_wall_curr_e), dIelec_J(n_shell_curr_e)
     type(type_bnd_element) :: bndelem_s
     type(type_element)     :: elem_s    
     type(type_node)        :: node_k, node_s
@@ -2453,6 +2454,8 @@ module vacuum_response
 
     if (resistive_wall) then
     if (my_id .eq. 0) write(*,*) 'Performing halo RHS products'
+    if (my_id .eq. 0) write(*,*) 'n_shell_curr_e=', n_shell_curr_e
+    if (my_id .eq. 0) write(*,*) 'n_wall_curr_e=', n_wall_curr_e
 
       ! ===============================  Btan (eddy + halo) ===================================== 
       if (CARIDDI_mode .and. halo_freeb) then
@@ -2465,20 +2468,22 @@ module vacuum_response
         !> corresponds to matrix G_i in documentation
         call extended_matrix_vector(my_id,  1.0d0, sr%a_eyi, response_d_c_i, &
             dwall_curr_i(:), .true., rhs_contrib_arr, .false.)
+        
+        !!!!!!!!!!!!!!!!!!!!! EXPLICIT SCHEME TERMS !!!!!!!!!!!!!!!!!!!!!!
         if (.not. halo_imp) then
           !> corresponds to matrix V_i in documentation
           call extended_matrix_vector(my_id, -1.0d0, sr%a_eyi, response_d_b_i, &
               Yi_coils0(:), .true., rhs_contrib_arr, .false.)
-          !> corresponds to matrix F_e in documentation
-          if (.not. allocated(diag_e) ) allocate(diag_e(n_wall_curr_e))
-          diag_e(:) = 1.d0
-          call extended_matrix_vector(my_id, 1.d0, sr%a_eye, diag_e, &
-                wall_curr_e(:), .true., rhs_contrib_arr, .false.)
-          !> corresponds to matrix Qel_eq
-          if (.not. allocated(diag_el_eq) ) allocate(diag_el_eq(sr%n_electrode_J-1))
-          diag_el_eq(:) = 1.d0
-          call extended_matrix_vector(my_id, -1.d0, sr%aeq_el, diag_el_eq, &
-                I_elec_J(:), .TRUE., rhs_contrib_arr, .true.)
+          ! !> corresponds to matrix F_e in documentation
+          ! if (.not. allocated(diag_e) ) allocate(diag_e(n_wall_curr_e))
+          ! diag_e(:) = 1.d0
+          ! call extended_matrix_vector(my_id, 1.d0, sr%a_eye, diag_e, &
+          !       wall_curr_e(:), .true., rhs_contrib_arr, .false.)
+          ! !> corresponds to matrix Qel_eq
+          ! if (.not. allocated(diag_el_eq) ) allocate(diag_el_eq(n_shell_curr_e))
+          ! diag_el_eq(:) = 1.d0
+          ! call extended_matrix_vector(my_id, -1.d0, sr%aeq_el, diag_el_eq, &
+          !       I_elec_J(:), .TRUE., rhs_contrib_arr, .true.)
         else
           !> corresponds to matrix V_i in documentation
           call extended_matrix_vector(my_id, -1.0d0, sr%a_eyi, response_d_b_i, &
@@ -2503,7 +2508,7 @@ module vacuum_response
 
           if (.not. allocated(contrib_ieleq)) allocate(contrib_ieleq(n_dof_starwall))
           contrib_ieleq = 0.d0 
-          if (.not. allocated(diag_el_eq) ) allocate(diag_el_eq(sr%n_electrode_J-1))
+          if (.not. allocated(diag_el_eq) ) allocate(diag_el_eq(n_shell_curr_e))
           diag_el_eq(:) = 1.d0
           call extended_matrix_vector(my_id, -1.d0, sr%aeq_el, diag_el_eq, &
                 I_elec_J(:), .TRUE., contrib_ieleq, .true.)
@@ -3013,10 +3018,10 @@ module vacuum_response
 
     if (halo_freeb) then 
       if (allocated(old_dIelec_w)) deallocate(old_dIelec_w)
-      allocate(old_dIelec_w(sr%n_electrode_w-1))
+      allocate(old_dIelec_w(n_wall_curr_e))
       old_dIelec_w(:) = 0.d0
       if (allocated(old_dIelec_J)) deallocate(old_dIelec_J)
-      allocate(old_dIelec_J(sr%n_electrode_J-1))
+      allocate(old_dIelec_J(n_shell_curr_e))
       old_dIelec_J(:) = 0.d0
     endif
 
@@ -3223,8 +3228,8 @@ module vacuum_response
     real*8,  intent(in) :: psibnd_vec (n_dof_starwall) !< Vector of Psi boundary values
     real*8,  intent(in) :: dpsibnd_vec(n_dof_starwall) !< Vector of deltaPsi boundary values
     real*8, optional, intent(in) :: dzjbnd_vec(n_dof_starwall)
-    real*8, optional, intent(out):: dIelec_w(sr%n_electrode_w-1)
-    real*8, optional, intent(out):: dIelec_J(sr%n_electrode_J-1)
+    real*8, optional, intent(out):: dIelec_w(n_wall_curr_e)
+    real*8, optional, intent(out):: dIelec_J(n_shell_curr_e)
     type(type_SP_MATRIX):: a_mat
     
     ! --- Local variables
@@ -3241,9 +3246,9 @@ module vacuum_response
     real *8, allocatable :: inv_tmp_d_sii(:)
     real*8,  ALLOCATABLE :: diag_1(:)
     real*8,  ALLOCATABLE :: resp_R_zj, resp_R_psis
-    real*8               :: Ielec_w_now(sr%n_electrode_w-1)
-    real*8               :: Ielec_J_now(sr%n_electrode_J-1)   
-    real*8, ALLOCATABLE  :: response_R_psis(:,:), response_R_zj(:,:), jn_bez(:) 
+    real*8               :: Ielec_w_now(n_wall_curr_e)
+    real*8               :: Ielec_J_now(n_shell_curr_e)   
+    real*8, ALLOCATABLE  :: response_R_psis(:,:), response_R_zj(:,:), jn_bez(:), wall_curr_i_dbg(:) 
 
 
     if (halo_freeb .and. CARIDDI_mode) then
@@ -3296,13 +3301,13 @@ module vacuum_response
         if ( allocated(old_dpsibnd_vec) ) deallocate(old_dpsibnd_vec)
         allocate( old_dpsibnd_vec(n_dof_starwall) )
       end if 
-      if ( (.not. allocated(old_dIelec_J)) .or. (size(old_dIelec_J,1)/= sr%n_electrode_J-1) ) then
+      if ( (.not. allocated(old_dIelec_J)) .or. (size(old_dIelec_J,1)/= n_shell_curr_e) ) then
         if ( allocated(old_dIelec_J) ) deallocate(old_dIelec_J)
-        allocate( old_dIelec_J(sr%n_electrode_J-1) )
+        allocate( old_dIelec_J(n_shell_curr_e) )
       end if   
-      if ( (.not. allocated(old_dIelec_w)) .or. (size(old_dIelec_w,1)/= sr%n_electrode_w-1) ) then
+      if ( (.not. allocated(old_dIelec_w)) .or. (size(old_dIelec_w,1)/= n_wall_curr_e) ) then
         if ( allocated(old_dIelec_w) ) deallocate(old_dIelec_w)
-        allocate( old_dIelec_w(sr%n_electrode_w-1) )
+        allocate( old_dIelec_w(n_wall_curr_e) )
       end if      
 
       !> WARNING: The following computation of dwall_curr_2 contains the term
@@ -3337,26 +3342,6 @@ module vacuum_response
       !if (my_id.eq.0) write(*,*) 'Size of dpsibnd_vec and old_dpsibnd_vec', size(dpsibnd_vec) , size(old_dpsibnd_vec)
       call extended_matrix_vector(my_id, -(1.d0+zeta), sr%a_yie, inv_tmp_d_sii, &
                                 dpsibnd_vec(:), .false., dwall_curr_i, .false.) 
-
-      if (my_id.eq.0) write(*,*) "Calculating the new Di*dIelec_J contribution to wall_curr_i"
-      call extended_matrix_vector(my_id, +(1.d0+zeta), sr%d_yieqe, inv_tmp_d_sii, &
-                                dIelec_J(:), .false., dwall_curr_i, .false.) 
-      if (my_id.eq.0) write(*,*) "Calculating the new Ei*dIelec_w contribution to wall_curr_i"
-      call extended_matrix_vector(my_id, +(1.d0+zeta), sr%e_yiwe, inv_tmp_d_sii, &
-                                dIelec_w(:), .false., dwall_curr_i, .false.) 
-      if (my_id.eq.0) write(*,*) "Calculating the new Gi*dIelec_w contribution to wall_curr_i"
-      call extended_matrix_vector(my_id, tstep*theta, sr%g_yiwe, inv_tmp_d_sii, &
-                                dIelec_w(:), .false. , dwall_curr_i, .false. )
-      if (my_id.eq.0) write(*,*) "Calculating the new Gi*Ielec_w contribution to wall_curr_i"
-      call extended_matrix_vector(my_id, tstep, sr%g_yiwe, inv_tmp_d_sii, &
-                                Ielec_w_now(:), .false. , dwall_curr_i, .false. )
-
-      if (my_id.eq.0) write(*,*) 'Calling for -sr%d_yieqe*inv_tmp_d_sii*old_dIelec_J'                                
-      call extended_matrix_vector(my_id, -zeta, sr%d_yieqe, inv_tmp_d_sii, &
-                                old_dIelec_J(:), .false. , dwall_curr_i, .false. )
-      if (my_id.eq.0) write(*,*) 'Calling for -sr%e_yiwe*inv_tmp_d_sii*old_dIelec_w'                                
-      call extended_matrix_vector(my_id, -zeta, sr%e_yiwe, inv_tmp_d_sii, &
-                                old_dIelec_w(:), .false. , dwall_curr_i, .false. )
       if (my_id.eq.0) write(*,*) 'Calling for sr%a_yie*inv_tmp_d_sii*old_dpsibnd_vec'                                
       !> corresponds to matrix D_i in documentation
       call extended_matrix_vector(my_id, zeta, sr%a_yie, inv_tmp_d_sii, &
@@ -3379,6 +3364,53 @@ module vacuum_response
         CLOSE(12)  
       endif
 
+      dwall_curr_i = 0.d0
+      !!! CALCULATE WALL_CURR_i WITH ALL CORRECTIONS, DEBUGGING
+      ! N.B. Sign change is present and accounted for in read_starwall_response!
+      ! Ci_star from CARIDDI already contains a minus sign! See documentation
+      if (my_id.eq.0) write(*,*) 'CALCULATING COMPLETE WALL_CURR_I'
+
+      !> corresponds to matrix A_i in documentation
+      if (my_id.eq.0) write(*,*) 'Calling for sr%a_yie*inv_tmp_d_sii*dpsibnd_vec'
+      !if (my_id.eq.0) write(*,*) 'Size of dpsibnd_vec and old_dpsibnd_vec', size(dpsibnd_vec) , size(old_dpsibnd_vec)
+      call extended_matrix_vector(my_id, -(1.d0+zeta), sr%a_yie, inv_tmp_d_sii, &
+                                dpsibnd_vec(:), .false., dwall_curr_i, .false.) 
+      if (my_id.eq.0) write(*,*) "Calculating the new Di*dIelec_J contribution to wall_curr_i"
+      call extended_matrix_vector(my_id, +(1.d0+zeta), sr%d_yieqe, inv_tmp_d_sii, &
+                                dIelec_J(:), .false., dwall_curr_i, .false.) 
+      if (my_id.eq.0) write(*,*) "Calculating the new Ei*dIelec_w contribution to wall_curr_i"
+      call extended_matrix_vector(my_id, +(1.d0+zeta), sr%e_yiwe, inv_tmp_d_sii, &
+                                dIelec_w(:), .false., dwall_curr_i, .false.) 
+      if (my_id.eq.0) write(*,*) "Calculating the new Gi*dIelec_w contribution to wall_curr_i"
+      call extended_matrix_vector(my_id, tstep*theta, sr%g_yiwe, inv_tmp_d_sii, &
+                                dIelec_w(:), .false. , dwall_curr_i, .false. )
+      if (my_id.eq.0) write(*,*) "Calculating the new Gi*Ielec_w contribution to wall_curr_i"
+      call extended_matrix_vector(my_id, tstep, sr%g_yiwe, inv_tmp_d_sii, &
+                                Ielec_w_now(:), .false. , dwall_curr_i, .false. )
+      if (my_id.eq.0) write(*,*) 'Calling for -sr%d_yieqe*inv_tmp_d_sii*old_dIelec_J'                                
+      call extended_matrix_vector(my_id, -zeta, sr%d_yieqe, inv_tmp_d_sii, &
+                                old_dIelec_J(:), .false. , dwall_curr_i, .false. )
+      if (my_id.eq.0) write(*,*) 'Calling for -sr%e_yiwe*inv_tmp_d_sii*old_dIelec_w'                                
+      call extended_matrix_vector(my_id, -zeta, sr%e_yiwe, inv_tmp_d_sii, &
+                                old_dIelec_w(:), .false. , dwall_curr_i, .false. )
+      if (my_id.eq.0) write(*,*) 'Calling for sr%a_yie*inv_tmp_d_sii*old_dpsibnd_vec'                                
+      !> corresponds to matrix D_i in documentation
+      call extended_matrix_vector(my_id, zeta, sr%a_yie, inv_tmp_d_sii, &
+                                old_dpsibnd_vec(:), .false., dwall_curr_i, .true.) 
+      !if (my_id.eq.0) write(*,*) 'DONE Calling for sr%a_yie*inv_tmp_d_sii*old_dpsibnd_vec' 
+
+      dwall_curr_i(:) = dwall_curr_i(:) + dwall_curr_i2(:)
+      if (index_now <= 1 ) dwall_curr_i = 0.d0
+      if (.not. ALLOCATED(wall_curr_i_dbg)) ALLOCATE(wall_curr_i_dbg(n_wall_curr_i))
+      wall_curr_i_dbg(:) = wall_curr_i(:) + dwall_curr_i(:) 
+      if (my_id == 0) then
+        OPEN(UNIT=12, FILE="wall_curr_i_dbg.dat", ACTION="write", STATUS="replace")
+        DO k=1,n_wall_curr_i
+            WRITE(12,*) wall_curr_i_dbg(k)
+        END DO
+        CLOSE(12)  
+      endif
+ 
       ! ------------------------------------  CROSSING DOFS ------------------------------------------------
 
       ! Get electrode current from Jn
@@ -3393,9 +3425,9 @@ module vacuum_response
       endif
       
       ! Initialize to 0.d0 at each time step before computing
-      if (.not. allocated(I_elec_J)) ALLOCATE(I_elec_J(sr%n_electrode_J-1))
+      if (.not. allocated(I_elec_J)) ALLOCATE(I_elec_J(n_shell_curr_e))
       I_elec_J = 0.d0
-      if (.not. allocated(I_elec_w)) ALLOCATE(I_elec_w(sr%n_electrode_w-1))
+      if (.not. allocated(I_elec_w)) ALLOCATE(I_elec_w(n_wall_curr_e))
       I_elec_w = 0.d0 
 
       I_elec_w(:) = Ielec_w_now
@@ -3415,18 +3447,17 @@ module vacuum_response
         END DO
         CLOSE(12)      
         OPEN(UNIT=12, FILE="I_elec_w.dat", ACTION="write", STATUS="replace")
-        DO k=1,sr%n_electrode_w-1
+        DO k=1,n_wall_curr_e
           WRITE(12,*) I_elec_w(k)
         END DO
         CLOSE(12)
         OPEN(UNIT=12, FILE="I_elec_J.dat", ACTION="write", STATUS="replace")
-        DO k=1,sr%n_electrode_J-1
+        DO k=1,n_shell_curr_e
           WRITE(12,*) I_elec_J(k)
         END DO
         CLOSE(12)
       endif
         
-
     else
 
       ! ---------------------------------------------------------------------------------------------------
@@ -3789,7 +3820,7 @@ module vacuum_response
     logical :: update_required
     integer :: ierr,loc_size,ntasks
     real*8  :: test_sum,test_sum2
-    real*8  :: Jj_vec_tot(sr%n_electrode_J), Jj_vec(sr%n_electrode_J-1)
+    real*8  :: Jj_vec_tot(n_shell_curr_e+1), Jj_vec(n_shell_curr_e)
     real*8,ALLOCATABLE :: diag_el_eq(:), u_h_vec(:), response_m_w_temp(:,:), Jmat_w_rank(:,:), Jmat_J_rank(:,:)
     type(t_distrib_mat)  :: response_m_d                   !< \f$\hat{D}\f$ in the documentation
     type(t_distrib_mat)  :: response_m_a                   !< \f$\hat{A}\f$ in the documentation
@@ -3927,8 +3958,8 @@ module vacuum_response
           response_m_w_h = -response_m_w_h
 
           ! --- m_u_h = - ael_eq * J_j
-          if (.not. allocated(Jmat_J_rank)) allocate(Jmat_J_rank(sr%n_electrode_J-1,sr%nd_bez) )
-          Jmat_J_rank = sr%Jmat_J(1:sr%n_electrode_J-1,:)
+          if (.not. allocated(Jmat_J_rank)) allocate(Jmat_J_rank(n_shell_curr_e,sr%nd_bez) )
+          Jmat_J_rank = sr%Jmat_J(1:n_shell_curr_e,:)
           call matrix_multiplication(my_id, sr%aeq_el, mat2_not_distr=Jmat_J_rank, res_mat_not_distr=response_m_u_h)
           call MPI_AllREDUCE(MPI_IN_PLACE,response_m_u_h,size(response_m_u_h),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)          
           response_m_u_h = -response_m_u_h
