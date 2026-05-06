@@ -771,12 +771,12 @@ module vacuum_response
     call MPI_bcast(sr%ind_start_coils,     1, MPI_INTEGER,  0, MPI_COMM_WORLD, err)
     call MPI_bcast(sr%ncoil,                   1, MPI_INTEGER,  0, MPI_COMM_WORLD, err)
 
-    ! Last parameter defines how matrix should be distributed: .false. - rowwise; .true. - columnwise
+    ! Last parameter defines how matrix should be distributed: .true. - rowwise; .false. - columnwise
     if (CARIDDI_mode .and. halo_freeb) then
       call read_array_par(filehandle, 'yie', (/sr%n_nw, sr%nd_bez/), disp, my_id, sr%a_yie, .false. ) 
-      call read_array_par(filehandle, 'd_yieqe', (/sr%n_nw, sr%n_electrode_J-1/), disp, my_id, sr%d_yieqe, .false. ) 
-      call read_array_par(filehandle, 'e_yiwe', (/sr%n_nw, sr%n_electrode_w-1/), disp, my_id, sr%e_yiwe, .false. ) 
-      call read_array_par(filehandle, 'g_yiwe', (/sr%n_nw, sr%n_electrode_w-1/), disp, my_id, sr%g_yiwe, .false. ) 
+      call read_array_par(filehandle, 'd_yieqe', (/sr%n_nw, sr%n_electrode_J-1/), disp, my_id, sr%d_yieqe, .true. ) 
+      call read_array_par(filehandle, 'e_yiwe', (/sr%n_nw, sr%n_electrode_w-1/), disp, my_id, sr%e_yiwe, .true. ) 
+      call read_array_par(filehandle, 'g_yiwe', (/sr%n_nw, sr%n_electrode_w-1/), disp, my_id, sr%g_yiwe, .true. ) 
     else
       call read_array_par    (filehandle, 'ye',       (/sr%n_w,sr%nd_bez/),    disp, my_id,  sr%a_ye,     .false.) 
     endif
@@ -816,6 +816,7 @@ module vacuum_response
     end if
     if (halo_freeb) then
       if (CARIDDI_mode)  call read_array_par(filehandle, 'FwtFw_inv', (/sr%n_electrode_w-1, sr%n_electrode_w-1/), disp, my_id, sr%fwtfw_inv, .true.)
+      ! M_eye * (Fw^T Fw)^-1
       if (CARIDDI_mode)  call read_array_par(filehandle, 'W_h', (/sr%nd_bez, sr%n_electrode_w-1/) , disp, my_id, sr%w_h,  .true.  )
       if (my_id == 0 .and. CARIDDI_mode) then ! use read_array_not_distr ?
         call read_array_not_distr(filehandle, 'ielsphi_w', (/sr%n_pts_real_w,3/), disp, float2d=sr%ielsphi_real_w, deb=.false.)
@@ -1168,6 +1169,58 @@ module vacuum_response
           end do
     
         end do
+!       else if ( mat1%row_wise .and. mat2%row_wise ) then
+       
+!         if(mat1%dim(2) /= mat2%dim(1) ) then
+!           write(*,*) "ERROR: Dimensions of  multiplied matrices (2) #col =", mat1%dim(2), &
+!                      " #row =", mat2%dim(1) , "STOP (2)"
+!           stop
+!         endif
+    
+!         res_mat_not_distr=0.0   
+    
+!         ! loop over all tasks
+!         do i = 1, ntasks
+    
+!           ! Broadcasting size of the distributed row
+!           length = size(mat2%loc_mat,1)
+        
+!           call MPI_BCAST(length, 1, MPI_INTEGER, i-1, MPI_COMM_WORLD, ierr )
+    
+!           ! temporal matrix for receiving part of the distributed matrix and
+!           ! multiply it
+!           if ( allocated(tmp) ) deallocate(tmp)
+!           allocate( tmp(length,size(mat2%loc_mat,2)) )
+    
+!           ! part of second matrix broadcasted to all tasks
+!           if(my_id == i-1)  tmp    = mat2%loc_mat
+!           if(my_id == i-1 ) length = size(tmp)
+!           call MPI_BCAST(length, 1, MPI_INTEGER, i-1, MPI_COMM_WORLD, ierr)
+!           call MPI_BCAST(tmp, length, MPI_DOUBLE_PRECISION, i-1, MPI_COMM_WORLD,ierr)
+    
+!           ! Matrix -matrix multiplications
+!           glob_index_j = (i-1)*mat2%step
+!           glob_index_i = my_id*mat2%step
+
+!           do z = 1, size(mat1%loc_mat,1) ! Dist
+!             do k = 1, size(tmp,2) ! Full
+    
+!               sum_element=0.0
+
+! !$omp parallel private (j) shared (sum_element,mat1,z,k,tmp) 
+! !$omp do reduction (+:sum_element)
+!               do j = 1, size(mat2%loc_mat,1) ! Dist
+!                 sum_element = sum_element + mat1%loc_mat(z,j+glob_index_i) * tmp(j,k)
+!               end do
+! !$omp end do 
+! !$omp end parallel
+
+!               res_mat_not_distr(z + glob_index_i, k ) = sum_element
+    
+!             end do
+!           end do
+    
+!         end do
       else
         write(*,*) 'ERROR in matrix_multiplication: Combination of rowwise/columnwise not implemented (2).'
         stop
@@ -1210,14 +1263,37 @@ module vacuum_response
     
           end do
         end do
-        
-      else
+      else 
         write(*,*) 'ERROR in matrix_multiplication: Combination of rowwise/columnwise not implemented (3).'
         stop
       end if
+        
+!       else if (.not. mat1%row_wise) then   ! R.S>, need to check for correctness
+!         ! mat1 is column-wise distributed
+!         res_mat_not_distr=0.0
+        
+!         ! Matrix -matrix multiplications     
+!         glob_index_i = my_id*mat1%step
+!         do z = 1, size(mat1%loc_mat,1)
+!           do k = 1, size(mat2_not_distr,2)
+    
+!             sum_element=0.0
+
+! !$omp parallel private (j) shared (sum_element,mat1,z,k,tmp,mat2_not_distr) 
+! !$omp do reduction (+:sum_element) 
+!             do j = 1, size(mat1%loc_mat,2)
+!               sum_element = sum_element + mat1%loc_mat(z,j) *mat2_not_distr(j+glob_index_i,k)
+!             end do
+! !$omp end do 
+! !$omp end parallel
+
+!             res_mat_not_distr(z , k) = sum_element
+    
+!           end do
+!         end do
+!     endif
     
     else
- 
       write(*,*) 'ERROR in matrix_multiplication: Unsupported set of matrices provided.'
       stop
 
@@ -2141,19 +2217,19 @@ module vacuum_response
     !!! R.S. > SHIFT ALL OF THIS TO A SUBROUTINE: MAKE A VERSION WHERE YOU ASSIGN DELTAZJ AND DELTAPSI AS
     ! OPTIONAL ARGUMENTS AND A VERSION FOR THE LHS ENTRIES WHERE YOU DON'T ASSIGN THEM
 
-      if (.not. ALLOCATED(response_R_psis)) allocate(response_R_psis(sr%nd_bez, sr%nd_bez))
-      if (.not. ALLOCATED(response_R_zj)) allocate(response_R_zj(sr%nd_bez, sr%nd_bez))
-      if (.not. ALLOCATED(jn_bez)) allocate(jn_bez(sr%nd_bez))
-      if (.not. ALLOCATED(response_m_t_h_zj)) allocate(response_m_t_h_zj(sr%nd_bez, sr%nd_bez))
-      if (.not. ALLOCATED(response_m_t_h_psis)) allocate(response_m_t_h_psis(sr%nd_bez, sr%nd_bez))
+      ! if (.not. ALLOCATED(response_R_psis)) allocate(response_R_psis(sr%nd_bez, sr%nd_bez))
+      ! if (.not. ALLOCATED(response_R_zj)) allocate(response_R_zj(sr%nd_bez, sr%nd_bez))
+      ! if (.not. ALLOCATED(jn_bez)) allocate(jn_bez(sr%nd_bez))
+      ! if (.not. ALLOCATED(response_m_t_h_zj)) allocate(response_m_t_h_zj(sr%nd_bez, sr%nd_bez))
+      ! if (.not. ALLOCATED(response_m_t_h_psis)) allocate(response_m_t_h_psis(sr%nd_bez, sr%nd_bez))
 
-      call halo_time_stepping(my_id, node_list, element_list, bnd_elm_list, bnd_node_list, response_R_zj=response_R_zj, response_R_psis=response_R_psis, jn_bez=jn_bez, debug=.false.)
+      !call halo_time_stepping(my_id, node_list, element_list, bnd_elm_list, bnd_node_list, response_R_zj=response_R_zj, response_R_psis=response_R_psis, jn_bez=jn_bez, debug=.false.)
       
       ! Perform products with electrode projection matrices
-      response_m_t_h_zj(:,:) = 0.d0 
-      response_m_t_h_psis(:,:) = 0.d0
-      response_m_t_h_zj = MATMUL(response_m_t_h, response_R_zj)
-      response_m_t_h_psis = MATMUL(response_m_t_h, response_R_psis)
+      ! response_m_t_h_zj(:,:) = 0.d0 
+      ! response_m_t_h_psis(:,:) = 0.d0
+      ! response_m_t_h_zj = MATMUL(response_m_t_h, response_R_zj)
+      ! response_m_t_h_psis = MATMUL(response_m_t_h, response_R_psis)
 
       ! if (.not. ALLOCATED(R_psis)) allocate(R_psis(npts_tot, sr%nd_bez))
       ! if (.not. ALLOCATED(R_zj)) allocate(R_zj(npts_tot, sr%nd_bez ))
@@ -2424,7 +2500,7 @@ module vacuum_response
     endif
 
     ! --- Update the derived response matrices
-    call update_response(my_id, tstep, resistive_wall)
+    call update_response(my_id, tstep, resistive_wall, node_list, element_list, bnd_elm_list, bnd_node_list )
 
     ! --- Perform the time-stepping for the wall currents.
     if ( resistive_wall .and.  (sr%n_tor>0) ) then 
@@ -2575,9 +2651,11 @@ module vacuum_response
     !$omp parallel do                                                                                         &
     !$omp default(none)                                                                                       &    
     !$omp shared(my_id, a_mat, rhs_loc, bnd_elm_list, element_list, bnd_node_list, node_list, index_min, index_max,          &
-    !$omp   response_m_e, response_m_e_i, response_m_h, response_m_j, response_m_j_i, response_m_t_h,response_m_t_h_zj,response_m_t_h_psis, H1, H1_s, HZ, sr,              &
+    !$omp   response_m_e, response_m_e_i, response_m_h, response_m_j, response_m_j_i, response_m_eh, response_m_zh, H1, H1_s, HZ, sr,              &
+    !$omp   response_m_ph, response_m_qh, response_m_xh, response_m_vh,                                                                        &
     !$omp   bext_tan, I_coils, wall_curr, dwall_curr, psibnd_vec, dpsibnd_vec,psibnd_coils,                   &
-    !$omp  wall_curr_i, dwall_curr_i, wall_curr_e, dwall_curr_e, halo_imp, F0, npol, npts_tot, response_R_zj, response_R_psis, J_normal, Jn_bez, fact_mu0,                   &
+    !$omp  wall_curr_i, dwall_curr_i, wall_curr_e, dwall_curr_e, halo_imp, F0, npol, npts_tot, J_normal, fact_mu0,                   &
+    !$omp I_elec_w, I_elec_J, dIelec_w, dIelec_J, &
 #ifdef __GFORTRAN__
     !$omp   wgauss_copy,                                                                                      &
 #endif
@@ -2711,13 +2789,12 @@ module vacuum_response
                           amat_contrib = - common_prefactor * response_m_e_i(i_resp, j_resp)
                         elseif (CARIDDI_mode .and. halo_freeb .and. halo_imp) then
 
-                      ! if (my_id.eq.0 .and. m_bndelem.eq.1 .and. l_tor.eq.1 .and. l_vertex.eq.1 &
-                      !   .and. l_dof.eq.1 .and. i_vertex.eq.1 .and. i_dof.eq.1 .and. i_starwall.eq.1 &
-                      !   .and. j_node_bnd.eq.1 .and. j_dof.eq.1 .and. j_starwall.eq.1) write(*,*) 'Performing products for halo implicit'
-
-                          amat_contrib_psi = - common_prefactor * (response_m_e_i(i_resp,j_resp) + &
-                                           response_m_t_h_psis(i_resp,j_resp) )
-                          amat_contrib_zj  = - common_prefactor * response_m_t_h_zj(i_resp,j_resp) 
+                        ! if (my_id.eq.0 .and. m_bndelem.eq.1 .and. l_tor.eq.1 .and. l_vertex.eq.1 &
+                        !   .and. l_dof.eq.1 .and. i_vertex.eq.1 .and. i_dof.eq.1 .and. i_starwall.eq.1 &
+                        !   .and. j_node_bnd.eq.1 .and. j_dof.eq.1 .and. j_starwall.eq.1) write(*,*) 'Performing products for halo implicit'
+                
+                          amat_contrib_psi = - common_prefactor * response_m_eh(i_resp,j_resp)              
+                          amat_contrib_zj  = - common_prefactor * response_m_zh(i_resp,j_resp) 
 
                       ! if (my_id.eq.0 .and. m_bndelem.eq.1 .and. l_tor.eq.1 .and. l_vertex.eq.1 &
                       !   .and. l_dof.eq.1 .and. i_vertex.eq.1 .and. i_dof.eq.1 .and. i_starwall.eq.1 &
@@ -2745,11 +2822,15 @@ module vacuum_response
                   if (CARIDDI_mode .and. halo_freeb .and. .not. halo_imp) then 
                     rhs_contrib = sum( response_m_h(i_resp,:) * psibnd_vec(:))                     &
                               + sum( response_m_j_i(i_resp,:) * dpsibnd_vec(:))
+                  
                   elseif (CARIDDI_mode .and. halo_freeb .and. halo_imp) then
 
                     rhs_contrib = sum( response_m_h(i_resp,:) * psibnd_vec(:))                     &
                               + sum( response_m_j_i(i_resp,:) * dpsibnd_vec(:))                    &
-                              + sum(response_m_t_h(i_resp,:) * jn_bez(:))
+                              + sum(response_m_ph(i_resp,:)*I_elec_w(:))                           &
+                              + sum(response_m_qh(i_resp,:)*dIelec_w(:))                           &
+                              + sum(response_m_xh(i_resp,:)*I_elec_J(:))                           &
+                              + sum(response_m_vh(i_resp,:)*dIelec_J(:))                               
                   else
                   
                     rhs_contrib = sum( response_m_h(i_resp,:) * psibnd_vec(:))                     &
@@ -2788,7 +2869,6 @@ module vacuum_response
     if ( allocated(psibnd_vec ) ) deallocate( psibnd_vec  )
     if ( allocated(dpsibnd_vec) ) deallocate( dpsibnd_vec )
     if (allocated(dzjbnd_vec))    deallocate( dzjbnd_vec  )
-    if ( allocated(jn_bez) ) deallocate( jn_bez )
     if (allocated(J_normal)) deallocate(J_normal)
 
   end subroutine vacuum_boundary_integral
@@ -3279,6 +3359,12 @@ module vacuum_response
                               response_R_zj=response_R_zj, response_R_psis=response_R_psis, jn_bez=jn_bez, debug=.true., &
                               dzjbnd_vec=dzjbnd_vec, dpsibnd_vec=dpsibnd_vec, &
                                dIelec_w=dIelec_w, Ielec_w_now = Ielec_w_now, dIelec_J=dIelec_J, Ielec_J_now=Ielec_J_now) 
+      
+      if (index_now <= 1) then 
+        dIelec_J = 0.d0 
+        dIelec_w = 0.d0 
+      endif
+
       if (my_id .eq. 0) then 
         OPEN(UNIT=12, FILE="I_elec_w_from_time_stepping.dat", ACTION="write", STATUS="replace")
         DO k=1,sr%n_electrode_w-1
@@ -3330,66 +3416,71 @@ module vacuum_response
 
       inv_tmp_d_sii(:) = 1.0d0 / tmp_d_sii(:)
 
-      !> WARNING: Now we can compute the dwall_curr term for the current time-step
-      !!          to be added to the contribution from the previous time-step
+      ! !> WARNING: Now we can compute the dwall_curr term for the current time-step
+      ! !!          to be added to the contribution from the previous time-step
 
-      dwall_curr_i(:) = 0.d0
+      ! dwall_curr_i(:) = 0.d0
 
-      ! N.B. Sign change is present and accounted for in read_starwall_response!
-      ! Ci_star from CARIDDI already contains a minus sign! See documentation
-      !> corresponds to matrix A_i in documentation
-      if (my_id.eq.0) write(*,*) 'Calling for sr%a_yie*inv_tmp_d_sii*dpsibnd_vec'
-      !if (my_id.eq.0) write(*,*) 'Size of dpsibnd_vec and old_dpsibnd_vec', size(dpsibnd_vec) , size(old_dpsibnd_vec)
-      call extended_matrix_vector(my_id, -(1.d0+zeta), sr%a_yie, inv_tmp_d_sii, &
-                                dpsibnd_vec(:), .false., dwall_curr_i, .false.) 
-      if (my_id.eq.0) write(*,*) 'Calling for sr%a_yie*inv_tmp_d_sii*old_dpsibnd_vec'                                
-      !> corresponds to matrix D_i in documentation
-      call extended_matrix_vector(my_id, zeta, sr%a_yie, inv_tmp_d_sii, &
-                                old_dpsibnd_vec(:), .false., dwall_curr_i, .true.) 
-      !if (my_id.eq.0) write(*,*) 'DONE Calling for sr%a_yie*inv_tmp_d_sii*old_dpsibnd_vec' 
+      ! ! N.B. Sign change is present and accounted for in read_starwall_response!
+      ! ! Ci_star from CARIDDI already contains a minus sign! See documentation
+      ! !> corresponds to matrix A_i in documentation
+      ! if (my_id.eq.0) write(*,*) 'Calling for sr%a_yie*inv_tmp_d_sii*dpsibnd_vec'
+      ! !if (my_id.eq.0) write(*,*) 'Size of dpsibnd_vec and old_dpsibnd_vec', size(dpsibnd_vec) , size(old_dpsibnd_vec)
+      ! call extended_matrix_vector(my_id, -(1.d0+zeta), sr%a_yie, inv_tmp_d_sii, &
+      !                           dpsibnd_vec(:), .false., dwall_curr_i, .false.) 
+      ! if (my_id.eq.0) write(*,*) 'Calling for sr%a_yie*inv_tmp_d_sii*old_dpsibnd_vec'                                
+      ! !> corresponds to matrix D_i in documentation
+      ! call extended_matrix_vector(my_id, zeta, sr%a_yie, inv_tmp_d_sii, &
+      !                           old_dpsibnd_vec(:), .false., dwall_curr_i, .true.) 
+      ! !if (my_id.eq.0) write(*,*) 'DONE Calling for sr%a_yie*inv_tmp_d_sii*old_dpsibnd_vec' 
 
-      if (my_id .eq. 0) then
-        write(22,*) 'M_yie: infos', sr%a_yie%distrib, sr%a_yie%row_wise, sr%a_yie%ind_start, sr%a_yie%ind_end, sr%a_yie%step
-        22 format(1x, 'distributed', L2, ',rowwise?', L2, ',ind_start of chunk:', I4, ',ind_end of chunk:', I4, ', step' , I4)
-      endif
+      ! if (my_id .eq. 0) then
+      !   write(22,*) 'M_yie: infos', sr%a_yie%distrib, sr%a_yie%row_wise, sr%a_yie%ind_start, sr%a_yie%ind_end, sr%a_yie%step
+      !   22 format(1x, 'distributed', L2, ',rowwise?', L2, ',ind_start of chunk:', I4, ',ind_end of chunk:', I4, ', step' , I4)
+      ! endif
        
-      dwall_curr_i(:) = dwall_curr_i(:) + dwall_curr_i2(:)
-      if (index_now <= 1 ) dwall_curr_i = 0.d0
-      wall_curr_i(:) = wall_curr_i(:) + dwall_curr_i(:) 
-      if (my_id == 0) then
-        OPEN(UNIT=12, FILE="wall_curr_i.dat", ACTION="write", STATUS="replace")
-        DO k=1,n_wall_curr_i
-            WRITE(12,*) wall_curr_i(k)
-        END DO
-        CLOSE(12)  
-      endif
+      ! dwall_curr_i(:) = dwall_curr_i(:) + dwall_curr_i2(:)
+      ! if (index_now <= 1 ) dwall_curr_i = 0.d0
+      ! wall_curr_i(:) = wall_curr_i(:) + dwall_curr_i(:) 
+      ! if (my_id == 0) then
+      !   OPEN(UNIT=12, FILE="wall_curr_i.dat", ACTION="write", STATUS="replace")
+      !   DO k=1,n_wall_curr_i
+      !       WRITE(12,*) wall_curr_i(k)
+      !   END DO
+      !   CLOSE(12)  
+      ! endif
 
       dwall_curr_i = 0.d0
-      !!! CALCULATE WALL_CURR_i WITH ALL CORRECTIONS, DEBUGGING
+      !!! CALCULATE WALL_CURR_i WITH ALL CORRECTIONS
       ! N.B. Sign change is present and accounted for in read_starwall_response!
       ! Ci_star from CARIDDI already contains a minus sign! See documentation
       if (my_id.eq.0) write(*,*) 'CALCULATING COMPLETE WALL_CURR_I'
 
       !> corresponds to matrix A_i in documentation
       if (my_id.eq.0) write(*,*) 'Calling for sr%a_yie*inv_tmp_d_sii*dpsibnd_vec'
-      !if (my_id.eq.0) write(*,*) 'Size of dpsibnd_vec and old_dpsibnd_vec', size(dpsibnd_vec) , size(old_dpsibnd_vec)
       call extended_matrix_vector(my_id, -(1.d0+zeta), sr%a_yie, inv_tmp_d_sii, &
                                 dpsibnd_vec(:), .false., dwall_curr_i, .false.) 
+      !> corresponds to matrix JE_i in documentation
       if (my_id.eq.0) write(*,*) "Calculating the new Di*dIelec_J contribution to wall_curr_i"
       call extended_matrix_vector(my_id, +(1.d0+zeta), sr%d_yieqe, inv_tmp_d_sii, &
                                 dIelec_J(:), .false., dwall_curr_i, .false.) 
+      !> corresponds to matrix WE_i in documentation
       if (my_id.eq.0) write(*,*) "Calculating the new Ei*dIelec_w contribution to wall_curr_i"
       call extended_matrix_vector(my_id, +(1.d0+zeta), sr%e_yiwe, inv_tmp_d_sii, &
                                 dIelec_w(:), .false., dwall_curr_i, .false.) 
+      !> corresponds to matrix WI_i in documentation
       if (my_id.eq.0) write(*,*) "Calculating the new Gi*dIelec_w contribution to wall_curr_i"
       call extended_matrix_vector(my_id, tstep*theta, sr%g_yiwe, inv_tmp_d_sii, &
                                 dIelec_w(:), .false. , dwall_curr_i, .false. )
+      !> corresponds to matrix WH_i in documentation
       if (my_id.eq.0) write(*,*) "Calculating the new Gi*Ielec_w contribution to wall_curr_i"
       call extended_matrix_vector(my_id, tstep, sr%g_yiwe, inv_tmp_d_sii, &
                                 Ielec_w_now(:), .false. , dwall_curr_i, .false. )
+      !> corresponds to matrix JP_i in documentation
       if (my_id.eq.0) write(*,*) 'Calling for -sr%d_yieqe*inv_tmp_d_sii*old_dIelec_J'                                
       call extended_matrix_vector(my_id, -zeta, sr%d_yieqe, inv_tmp_d_sii, &
                                 old_dIelec_J(:), .false. , dwall_curr_i, .false. )
+      !> corresponds to matrix WP_i in documentation
       if (my_id.eq.0) write(*,*) 'Calling for -sr%e_yiwe*inv_tmp_d_sii*old_dIelec_w'                                
       call extended_matrix_vector(my_id, -zeta, sr%e_yiwe, inv_tmp_d_sii, &
                                 old_dIelec_w(:), .false. , dwall_curr_i, .false. )
@@ -3401,12 +3492,12 @@ module vacuum_response
 
       dwall_curr_i(:) = dwall_curr_i(:) + dwall_curr_i2(:)
       if (index_now <= 1 ) dwall_curr_i = 0.d0
-      if (.not. ALLOCATED(wall_curr_i_dbg)) ALLOCATE(wall_curr_i_dbg(n_wall_curr_i))
-      wall_curr_i_dbg(:) = wall_curr_i(:) + dwall_curr_i(:) 
+      if (index_now <= 1 ) dwall_curr_i = 0.d0
+      wall_curr_i(:) = wall_curr_i(:) + dwall_curr_i(:) 
       if (my_id == 0) then
-        OPEN(UNIT=12, FILE="wall_curr_i_dbg.dat", ACTION="write", STATUS="replace")
+        OPEN(UNIT=12, FILE="wall_curr_i_full.dat", ACTION="write", STATUS="replace")
         DO k=1,n_wall_curr_i
-            WRITE(12,*) wall_curr_i_dbg(k)
+            WRITE(12,*) wall_curr_i(k)
         END DO
         CLOSE(12)  
       endif
@@ -3800,10 +3891,11 @@ module vacuum_response
   !! This is necessary
   !! - right after the start or restart of the code
   !! - when wall resistivity, tstep, or some other parameters have changed.
-  subroutine update_response(my_id, tstep, resistive_wall)
+  subroutine update_response(my_id, tstep, resistive_wall, node_list, element_list, bnd_elm_list, bnd_node_list)
 
     use phys_module, only: time_evol_theta, time_evol_zeta
     use mpi_mod
+    use data_structure, only: type_node_list, type_node, type_element_list, type_element, type_bnd_node_list,type_bnd_element_list, type_bnd_element, type_SP_MATRIX
 
     implicit none
 
@@ -3811,23 +3903,46 @@ module vacuum_response
     integer,                     intent(in) :: my_id              !< MPI task ID
     real*8,                      intent(in) :: tstep              !< delta t,timestep
     logical,                     intent(in) :: resistive_wall     !< Resistive or ideal wall?
+    type(type_node_list), OPTIONAL,       intent(in) :: node_list            !< List of grid nodes
+    type(type_bnd_node_list), OPTIONAL,    intent(in) :: bnd_node_list        !< List of boundary grid nodes
+    type(type_bnd_element_list),OPTIONAL, intent(in) :: bnd_elm_list         !< List of boundary elements
+    type(type_element_list), OPTIONAL,    intent(in) :: element_list
 
     ! --- Local variables
-    integer :: i, j, k, j2, k2
+    integer :: i, j, k, j2, k2, leq, lw,nnw
     real*8, allocatable :: tmp_d_s(:)
     real*8, ALLOCATABLE :: tmp_d_sii(:)
+    integer :: dim_wh_i(2), dim_jp_i(2), dim_wp_i(2)
     real*8  :: theta, zeta
     logical :: update_required
     integer :: ierr,loc_size,ntasks
     real*8  :: test_sum,test_sum2
     real*8  :: Jj_vec_tot(n_shell_curr_e+1), Jj_vec(n_shell_curr_e)
     real*8,ALLOCATABLE :: diag_el_eq(:), u_h_vec(:), response_m_w_temp(:,:), Jmat_w_rank(:,:), Jmat_J_rank(:,:)
+    real*8,allocatable :: response_m_w_h(:,:), response_m_u_h(:,:), response_m_t_h(:,:)
+    real*8,allocatable :: response_m_jewj_i(:,:), response_m_wtotww_i(:,:), response_m_t_h_cpsi_i(:,:)
+    real*8,ALLOCATABLE :: response_m_JEWJ_CPSI_I(:,:), response_m_wtotww_cpsi_i(:,:)
+    real*8,ALLOCATABLE :: response_curr_contrib_dpsi(:,:), response_curr_contrib_dzj(:,:)
+    real*8,ALLOCATABLE :: response_m_JEWJ_czj_i(:,:), response_m_wtotww_czj_i(:,:), response_m_t_h_czj_i(:,:)
+    real*8,ALLOCATABLE :: response_R_psis(:,:), response_R_zj(:,:), jn_bez(:)
+    real*8,ALLOCATABLE :: old_wh_i(:,:), new_wh_i(:,:)
     type(t_distrib_mat)  :: response_m_d                   !< \f$\hat{D}\f$ in the documentation
     type(t_distrib_mat)  :: response_m_a                   !< \f$\hat{A}\f$ in the documentation
     type(t_distrib_mat)  :: response_m_d_i                 !< \f$\hat{D_i}\f$ in the documentation
     type(t_distrib_mat)  :: response_m_a_i                 !< \f$\hat{A_i}\f$ in the documentation
-
-
+    type(t_distrib_mat)  :: response_m_JE_i                !< \f$\hat{JE_i}\f$ in the documentation
+    type(t_distrib_mat)  :: response_m_WE_i                !< \f$\hat{WE_i}\f$ in the documentation
+    type(t_distrib_mat)  :: response_m_WI_i                !< \f$\hat{WI_i}\f$ in the documentation
+    type(t_distrib_mat)  :: temp_m_WH_i
+    type(t_distrib_mat)  :: temp_m_JP_i
+    type(t_distrib_mat)  :: temp_m_WP_i
+    type(t_distrib_mat)  :: response_m_WH_i                !< \f$\hat{WH_i}\f$ in the documentation
+    type(t_distrib_mat)  :: response_m_JP_i                !< \f$\hat{JP_i}\f$ in the documentation
+    type(t_distrib_mat)  :: response_m_WP_i                !< \f$\hat{WP_i}\f$ in the documentation
+    type(t_distrib_mat)  :: response_m_Wtot_i   
+    type(t_distrib_mat)  :: Jmat_J_par 
+    type(t_distrib_mat)  :: Jmat_w_par
+           
 
 ! --- Local variables to store the previous values of some parameters.
     real*8,  save :: old_thick   = 0.0
@@ -3859,9 +3974,13 @@ module vacuum_response
                  .or. ( .not. allocated(response_m_e_i)        ) &
                  .or. ( .not. allocated(response_m_h)         ) &
                  .or. ( .not. allocated(response_m_j_i)         ) &
-                 .or. ( .not. allocated(response_m_w_h))          &
-                 .or. ( .not. allocated(response_m_u_h))          &
-                 .or. ( .not. allocated(response_m_t_h))
+                 .or. ( .not. allocated(response_m_eh)         )   &
+                 .or. ( .not. allocated(response_m_zh)           )   &
+                 .or. ( .not. allocated(response_m_ph)           )   &
+                 .or. ( .not. allocated(response_m_qh)           )   &
+                 .or. ( .not. allocated(response_m_vh)           )   &
+                 .or. ( .not. allocated(response_m_xh)           )   
+                       
     else
       update_required = ( old_res     /= wall_resistivity       ) &
                  .or. ( old_tstep   /= tstep                  ) &
@@ -3894,6 +4013,37 @@ module vacuum_response
             call  alloc_distr(my_id, response_m_a_i, (/n_wall_curr_i, n_dof_starwall/), .false.)
         if( .not. allocated (response_m_d_i%loc_mat) ) &
             call  alloc_distr(my_id, response_m_d_i, (/n_wall_curr_i, n_dof_starwall/), .false.)
+        if( .not. allocated (response_m_JE_i%loc_mat) ) &
+            call  alloc_distr(my_id, response_m_JE_i, (/n_wall_curr_i, n_shell_curr_e/), .true.)
+        if( .not. allocated (response_m_WE_i%loc_mat) ) &
+            call  alloc_distr(my_id, response_m_WE_i, (/n_wall_curr_i, n_wall_curr_e/), .true.)
+        if( .not. allocated (response_m_WI_i%loc_mat) ) &
+            call  alloc_distr(my_id, response_m_WI_i, (/n_wall_curr_i, n_wall_curr_e/), .true.)
+        if( .not. allocated (response_m_Wtot_i%loc_mat) ) &
+            call  alloc_distr(my_id, response_m_Wtot_i, (/n_wall_curr_i, n_wall_curr_e/), .true.)
+
+        if( .not. allocated (temp_m_WH_i%loc_mat) ) &
+            call  alloc_distr(my_id, temp_m_WH_i, (/n_wall_curr_i, n_wall_curr_e/), .true.)
+        if (.not. allocated(old_wh_i)) allocate(old_wh_i(n_wall_curr_i,n_wall_curr_e))
+        if (.not. allocated(new_wh_i)) allocate(new_wh_i(n_wall_curr_i,n_wall_curr_e))
+
+        ! if( .not. allocated (response_m_WH_i%loc_mat) ) &
+        !     call  alloc_distr(my_id, response_m_WH_i, (/n_wall_curr_i, n_wall_curr_e/), .false.)
+
+        if( .not. allocated (temp_m_JP_i%loc_mat) ) &
+            call  alloc_distr(my_id, temp_m_JP_i, (/n_wall_curr_i, n_shell_curr_e/), .true.)
+        ! if( .not. allocated (response_m_JP_i%loc_mat) ) &
+        !     call  alloc_distr(my_id, response_m_JP_i, (/n_wall_curr_i, n_shell_curr_e/), .false.)
+
+        if( .not. allocated (temp_m_WP_i%loc_mat) ) &
+            call  alloc_distr(my_id, temp_m_WP_i, (/n_wall_curr_i, n_wall_curr_e/), .true.)
+        ! if( .not. allocated (response_m_WP_i%loc_mat) ) &
+        !     call  alloc_distr(my_id, response_m_WP_i, (/n_wall_curr_i, n_wall_curr_e/), .false.)
+
+        if( .not. allocated (Jmat_J_par%loc_mat) ) &
+            call  alloc_distr(my_id, Jmat_J_par, (/ n_shell_curr_e , n_dof_starwall /), .true.)
+        if( .not. allocated (Jmat_w_par%loc_mat) ) &
+            call  alloc_distr(my_id, Jmat_w_par, (/ n_wall_curr_e , n_dof_starwall /), .true.)
       else
         if ( .not. allocated(response_d_b) ) allocate( response_d_b(n_wall_curr) )
         if ( .not. allocated(response_d_c) ) allocate( response_d_c(n_wall_curr) )
@@ -3903,8 +4053,6 @@ module vacuum_response
         if( .not. allocated (response_m_d%loc_mat) ) &
             call  alloc_distr(my_id, response_m_d, (/n_wall_curr, n_dof_starwall/), .false.)
       endif
-
-
 
       ! ======================================================================================
       ! ------------------ Derived response matrices for time-evolution ----------------------
@@ -3922,21 +4070,237 @@ module vacuum_response
           response_d_b_i(:) = - tstep * wall_resistivity * sr%dii_yy / tmp_d_sii(:)
           response_d_c_i(:) = zeta / tmp_d_sii(:)
 
-          ! N.B. Change of sign compared to eddy-only coupl. is performed after reading, the Ci_star in CARIDDI already contains "-"
-          do j = 1, size(response_m_a_i%loc_mat,2) 
-            response_m_a_i%loc_mat(:,j) = -(1.d0+zeta) * sr%a_yie%loc_mat(:,j) / tmp_d_sii(:)
-          end do
-          ! N.B. Change of sign compared to eddy-only coupl. is performed after reading, the Ci_star in CARIDDI already contains "-"
-          do j = 1, size(response_m_d_i%loc_mat,2)
-            response_m_d_i%loc_mat(:,j) = zeta * sr%a_yie%loc_mat(:,j) / tmp_d_sii(:)
-          end do
+          !!!! CALL ROUTINE FOR HALO TIME STEPPING !!!
+          if (present(node_list)) then 
+            if (.not. ALLOCATED(response_R_psis)) allocate(response_R_psis(sr%nd_bez, sr%nd_bez))
+            if (.not. ALLOCATED(response_R_zj)) allocate(response_R_zj(sr%nd_bez, sr%nd_bez))
+            if (.not. ALLOCATED(jn_bez)) allocate(jn_bez(sr%nd_bez))
+            call halo_time_stepping(my_id, node_list, element_list, bnd_elm_list, bnd_node_list, response_R_zj=response_R_zj, response_R_psis=response_R_psis, jn_bez=jn_bez, debug=.false.)
+          
+            ! --- m_w_h = a_eye * fwtfw^-1 * J_w
+            if (.not. allocated(Jmat_w_rank)) allocate(Jmat_w_rank(sr%n_electrode_w-1,sr%nd_bez) )
+            Jmat_w_rank = sr%Jmat_w(1:sr%n_electrode_w-1,:)
+            ! Define parallelized Jmat_w
+            do lw=1,size(Jmat_w_par%loc_mat,1)
+              Jmat_w_par%loc_mat(lw,:) = Jmat_w_rank(lw+my_id*Jmat_J_par%step,:)
+            enddo 
 
-          ! --- m_e_i = a_ee - matmul(a_eyi, m_a)
-          call matrix_multiplication(my_id,sr%a_eyi,mat2=response_m_a_i, res_mat_not_distr=response_m_e_i)
-          do j = 1, size(sr%a_ee%loc_mat,1)
-            response_m_e_i(j+my_id*sr%a_ee%step,:) = response_m_e_i(j+my_id*sr%a_ee%step,:) + sr%a_ee%loc_mat(j,:)
-          end do
-          call MPI_AllREDUCE(MPI_IN_PLACE,response_m_e_i,size(response_m_e_i),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
+            call matrix_multiplication(my_id, sr%w_h, mat2_not_distr=Jmat_w_rank, res_mat_not_distr=response_m_w_h)
+            call MPI_AllREDUCE(MPI_IN_PLACE,response_m_w_h,size(response_m_w_h),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
+            
+            ! Minus sign as the wall-impinging current is considered with opposite normal
+            response_m_w_h(:,:) = -response_m_w_h(:,:)
+
+            ! --- m_u_h = - ael_eq * J_j
+            if (.not. allocated(Jmat_J_rank)) allocate(Jmat_J_rank(n_shell_curr_e,sr%nd_bez) )
+            Jmat_J_rank = sr%Jmat_J(1:n_shell_curr_e,:)
+            
+            ! Define parallelized Jmat_J
+            do leq=1,size(Jmat_J_par%loc_mat,1)
+              Jmat_J_par%loc_mat(leq,:) = Jmat_J_rank(leq+my_id*Jmat_J_par%step,:)
+            enddo 
+
+            call matrix_multiplication(my_id, sr%aeq_el, mat2_not_distr=Jmat_J_rank, res_mat_not_distr=response_m_u_h)
+            call MPI_AllREDUCE(MPI_IN_PLACE,response_m_u_h,size(response_m_u_h),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
+            response_m_u_h(:,:) = -response_m_u_h(:,:)
+            
+            ! --- m_t_h = m_u_h + m_w_h
+            if (.not. ALLOCATED(response_m_t_h)) allocate(response_m_t_h(sr%nd_bez, sr%nd_bez))
+            response_m_t_h(:,:) = response_m_w_h(:,:) + response_m_u_h(:,:)
+
+            ! N.B. Change of sign compared to eddy-only coupl. is performed after reading, the Ci_star in CARIDDI already contains "-"
+            do j = 1, size(response_m_a_i%loc_mat,2) 
+              response_m_a_i%loc_mat(:,j) = -(1.d0+zeta) * sr%a_yie%loc_mat(:,j) / tmp_d_sii(:)
+            end do
+            ! N.B. Change of sign compared to eddy-only coupl. is performed after reading, the Ci_star in CARIDDI already contains "-"
+            do j = 1, size(response_m_d_i%loc_mat,2)
+              response_m_d_i%loc_mat(:,j) = zeta * sr%a_yie%loc_mat(:,j) / tmp_d_sii(:)
+            end do
+            
+            ! --- Calculate response_m_JE_i
+            do nnw = 1,size(response_m_JE_i%loc_mat,1) 
+              response_m_JE_i%loc_mat(nnw,:) = (1+zeta) * sr%d_yieqe%loc_mat(nnw,:) / tmp_d_sii(nnw+my_id*response_m_JE_i%step) 
+            end do
+            
+            ! --- Calculate response_m_WE_i 
+            do nnw = 1,size(response_m_WE_i%loc_mat,1)
+              response_m_WE_i%loc_mat(nnw,:) = (1+zeta) * sr%e_yiwe%loc_mat(nnw,:) / tmp_d_sii(nnw+my_id*response_m_WE_i%step) 
+            end do
+
+            ! --- Calculate response_m_WI_i 
+            do nnw = 1,size(response_m_WI_i%loc_mat,1)
+              response_m_WI_i%loc_mat(nnw,:) = tstep*theta * sr%g_yiwe%loc_mat(nnw,:) / tmp_d_sii(nnw+my_id*response_m_WI_i%step) 
+            end do
+
+            ! --- Sum up WE and WI
+            response_m_Wtot_i%loc_mat(:,:) = response_m_WE_i%loc_mat(:,:) + response_m_WI_i%loc_mat(:,:)
+
+            ! --- Calculate response_m_WH_i 
+
+            ! 1) Calculate temp. row-distributed matrix
+            do nnw = 1,size(temp_m_WH_i%loc_mat,1)
+              temp_m_WH_i%loc_mat(nnw,:) = tstep * sr%g_yiwe%loc_mat(nnw,:) / tmp_d_sii(nnw+my_id*temp_m_WH_i%step) 
+            end do
+            ! 1.5) Debug check
+            old_WH_i = 0.d0     
+            old_wh_i(temp_m_WH_i%ind_start:temp_m_WH_i%ind_end,:) = temp_m_WH_i%loc_mat(:,:)
+            call MPI_AllREDUCE(MPI_IN_PLACE,old_wh_i,size(old_wh_i),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
+            if (my_id .eq. 0) then 
+              open(unit=10, file="old_wh_i.txt", status="replace")
+              do i = 1, size(old_wh_i,1)
+                  write(10,'(*(ES24.16,1X))') (old_wh_i(i,j), j = 1, size(old_wh_i,2))
+              end do
+              close(10)
+            endif
+
+            ! 2) Make matrix column-distributed
+            dim_WH_i = (/  n_wall_curr_i , n_wall_curr_e  /)
+            
+            if (my_id .eq. 0) write(*,*) 'Calling row_col_distrib for WH...'
+            write(*,*) 'temp_m_WH_i%step and my_id', temp_m_WH_i%step , my_id
+            call row_col_distrib(my_id, ntasks, dim_WH_i, temp_m_WH_i, response_m_WH_i , row_wise = .false.)
+            if (my_id .eq. 0) write(*,*) 'Done calling row_col_distrib for WH!'
+            write(*,*) 'response_m_WH_i%step and my_id', response_m_WH_i%step , my_id
+            write(*,*) 'response_m_WH_i%dims and my_id', response_m_WH_i%dim(1) , response_m_WH_i%dim(2),  my_id
+
+            ! 1.5) Debug check
+            new_WH_i = 0.d0     
+            new_wh_i(:,response_m_WH_i%ind_start:response_m_WH_i%ind_end) = response_m_WH_i%loc_mat(:,:)
+            call MPI_AllREDUCE(MPI_IN_PLACE,new_wh_i,size(new_wh_i),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
+            if (my_id .eq. 0) then 
+              open(unit=10, file="new_wh_i.txt", status="replace")
+              do i = 1, size(new_wh_i,1)
+                  write(10,'(*(ES24.16,1X))') (new_wh_i(i,j), j = 1, size(new_wh_i,2))
+              end do
+              close(10)
+            endif
+          
+            ! --- Calculate response_m_JP_i 
+            do nnw = 1,size(temp_m_JP_i%loc_mat,1)
+              temp_m_JP_i%loc_mat(nnw,:) = - zeta * sr%d_yieqe%loc_mat(nnw,:) / tmp_d_sii(nnw+my_id*temp_m_JP_i%step) 
+            end do
+
+            dim_JP_i = (/  n_wall_curr_i , n_shell_curr_e  /)
+            
+            if (my_id .eq. 0) write(*,*) 'Calling row_col_distrib for JP...'
+            call row_col_distrib(my_id, ntasks, dim_JP_i, temp_m_JP_i, response_m_JP_i , row_wise = .false.)
+            if (my_id .eq. 0) write(*,*) 'Done calling row_col_distrib for JP!'
+
+            ! --- Calculate response_m_WP_i 
+            do nnw = 1,size(temp_m_WP_i%loc_mat,1)
+              temp_m_WP_i%loc_mat(nnw,:) = -zeta * sr%e_yiwe%loc_mat(nnw,:) / tmp_d_sii(nnw+my_id*temp_m_WP_i%step) 
+            end do
+
+            dim_WP_i = (/  n_wall_curr_i , n_wall_curr_e  /)
+            
+            if (my_id .eq. 0) write(*,*) 'Calling row_col_distrib for WP...'
+            call row_col_distrib(my_id, ntasks, dim_WP_i, temp_m_WP_i, response_m_WP_i , row_wise = .false. )
+            if (my_id .eq. 0) write(*,*) 'Done calling row_col_distrib for WP!'
+
+            ! Calculate product JE*W^J
+            if (my_id .eq. 0) write(*,*) 'sr%response_m_JE_i row_wise?', response_m_JE_i%row_wise
+            call matrix_multiplication(my_id, response_m_JE_i, mat2_not_distr=Jmat_J_rank, res_mat_not_distr=response_m_JEWJ_i)
+            call MPI_AllREDUCE(MPI_IN_PLACE,response_m_jewj_i,size(response_m_jewj_i),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
+            
+            ! Calculate product Wtot*W^w 
+            if (my_id .eq. 0) write(*,*) 'sr%response_m_Wtot_i row_wise?', response_m_Wtot_i%row_wise
+            call matrix_multiplication(my_id, response_m_Wtot_i, mat2_not_distr=Jmat_w_rank, res_mat_not_distr=response_m_wtotww_i)
+            call MPI_AllREDUCE(MPI_IN_PLACE,response_m_wtotww_i,size(response_m_wtotww_i),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
+
+            !!! CALCULATING ALL THE PIECES MAKING UP M_EH !!!
+
+            ! 1) response_m_JEWJ_i * response_R_psis
+            if (.not. allocated(response_m_JEWJ_CPSI_I)) allocate(response_m_JEWJ_CPSI_I(n_wall_curr_i,sr%nd_bez))
+            response_m_JEWJ_CPSI_I(:,:) = 0.d0
+            response_m_JEWJ_CPSI_I = MATMUL(response_m_jewj_i, response_R_psis )
+            ! 2) response_m_Wtotww_i * response_R_psis
+            if (.not. allocated(response_m_wtotww_cpsi_i)) allocate(response_m_wtotww_cpsi_i(n_wall_curr_i,sr%nd_bez))
+            response_m_wtotww_cpsi_i(:,:) = 0.d0
+            response_m_wtotww_cpsi_i = MATMUL(response_m_wtotww_i, response_R_psis)
+            ! 3) response_m_t_h * response_R_psis
+            if (.not. allocated(response_m_t_h_cpsi_i)) allocate(response_m_t_h_cpsi_i(sr%nd_bez,sr%nd_bez))
+            response_m_t_h_cpsi_i(:,:) = 0.d0
+            response_m_t_h_cpsi_i = MATMUL(response_m_t_h , response_R_psis)
+
+            ! Create response_curr_contrib_dpsi 
+            if (.not. allocated(response_curr_contrib_dpsi)) allocate(response_curr_contrib_dpsi(n_wall_curr_i, n_dof_starwall))
+            ! WARNING: The minus sign  " - response_m_wtotww_cpsi_i " exists because we assume a minus sign for the wall normal!
+            do j = 1, size(response_m_a_i%loc_mat,2)  ! m_a_i is column-wise
+              response_curr_contrib_dpsi(:,j+my_id*response_m_a_i%step) = response_m_a_i%loc_mat(:,j) + response_m_JEWJ_CPSI_I(:,j+my_id*response_m_a_i%step)  &  
+                                                                          - response_m_wtotww_cpsi_i(:,j+my_id*response_m_a_i%step)
+            enddo
+
+            ! CALCULATE RESPONSE_M_EH
+            ! --- m_eh_i = a_ee + matmul[ a_eyi, ( response_m_a_i + response_m_JEWJ_cpsi_i - response_m_wtotww_cpsi_i ) ] + matmul(response_m_t_h,Cpsi)
+
+            if (my_id .eq. 0) write(*,*) 'Halo field: calculating response_m_eh...'
+            call matrix_multiplication(my_id,sr%a_eyi,mat2_not_distr=response_curr_contrib_dpsi, res_mat_not_distr=response_m_eh)
+            if (my_id .eq. 0) write(*,*) 'Matrix multiplication done!'
+            call MPI_AllREDUCE(MPI_IN_PLACE,response_m_eh,size(response_m_eh),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
+            if (my_id .eq. 0) write(*,*) 'MPI_AllREDUCE done for response_m_eh!'
+            do j = 1, size(sr%a_ee%loc_mat,1)
+              response_m_eh(j+my_id*sr%a_ee%step,:) = response_m_eh(j+my_id*sr%a_ee%step,:) + sr%a_ee%loc_mat(j,:) + response_m_t_h_cpsi_i(j+my_id*sr%a_ee%step,:)
+            end do
+            if (my_id .eq. 0) write(*,*) 'Final sum done!'
+            if (my_id .eq. 0) write(*,*) '...DONE calculating response_m_eh!'          
+
+
+            !!! CALCULATING ALL THE PIECES MAKING UP M_Z!!!
+
+            ! 1) response_m_JEWJ_i * response_R_zj
+            if (.not. allocated(response_m_JEWJ_Czj_I)) allocate(response_m_JEWJ_Czj_I(n_wall_curr_i,sr%nd_bez))
+            response_m_JEWJ_Czj_I(:,:) = 0.d0
+            response_m_JEWJ_Czj_I = MATMUL(response_m_jewj_i, response_R_zj )
+            ! 2) response_m_Wtotww_i * response_R_zj
+            if (.not. allocated(response_m_wtotww_czj_i)) allocate(response_m_wtotww_czj_i(n_wall_curr_i,sr%nd_bez))
+            response_m_wtotww_czj_i(:,:) = 0.d0
+            response_m_wtotww_czj_i = MATMUL(response_m_wtotww_i, response_R_zj)
+            ! 3) response_m_t_h * response_R_zj
+            if (.not. allocated(response_m_t_h_czj_i)) allocate(response_m_t_h_czj_i(sr%nd_bez,sr%nd_bez))
+            response_m_t_h_czj_i(:,:) = 0.d0
+            response_m_t_h_czj_i = MATMUL(response_m_t_h , response_R_zj)
+            
+            ! Create response_curr_contrib_dzj 
+            if (.not. allocated(response_curr_contrib_dzj)) allocate(response_curr_contrib_dzj(n_wall_curr_i, n_dof_starwall))
+            ! WARNING: The minus sign  " - response_m_wtotww_czj_i " exists because we assume a minus sign for the wall normal!
+            response_curr_contrib_dzj(:,:) = + response_m_JEWJ_Czj_I(:,:) - response_m_wtotww_czj_i(:,:)
+
+            ! CALCULATE response_m_zh
+            if (my_id .eq. 0) write(*,*) 'Halo field: calculating response_m_zh...'
+            call matrix_multiplication(my_id,sr%a_eyi,mat2_not_distr=response_curr_contrib_dzj, res_mat_not_distr=response_m_zh)
+            call MPI_AllREDUCE(MPI_IN_PLACE,response_m_zh,size(response_m_zh),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
+            response_m_zh(:,:) = response_m_zh(:,:) + response_m_t_h_czj_i(:,:)
+            if (my_id .eq. 0) write(*,*) '...DONE calculating response_m_zh!'
+
+            ! RESPONSE_M_P_H = matmul(M_eyi * WH) + M_e,elw
+            if (my_id .eq. 0) write(*,*) 'Halo field: calculating response_m_ph...'
+            if (my_id .eq. 0) write(*,*) 'response_m_wh_i dims', response_m_WH_i%dim(1) , response_m_wh_i%dim(2)
+            call matrix_multiplication(my_id,sr%a_eyi,mat2=response_m_WH_i, res_mat_not_distr=response_m_PH)
+            do j = 1, size(sr%a_ee%loc_mat,1)
+              response_m_ph(j+my_id*sr%a_ee%step,:) = response_m_ph(j+my_id*sr%a_ee%step,:) + sr%w_h%loc_mat(j,:)
+            end do
+            call MPI_AllREDUCE(MPI_IN_PLACE,response_m_ph,size(response_m_ph),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
+            if (my_id .eq. 0) write(*,*) '...DONE calculating response_m_ph!'
+    
+            ! RESPONSE_M_Q_H = matmul(M_eyi * WP) 
+            if (my_id .eq. 0) write(*,*) 'Halo field: calculating response_m_qh...'
+            call matrix_multiplication(my_id,sr%a_eyi,mat2=response_m_WP_i, res_mat_not_distr=response_m_qh)
+            call MPI_AllREDUCE(MPI_IN_PLACE,response_m_qh,size(response_m_qh),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
+            if (my_id .eq. 0) write(*,*) '...DONE calculating response_m_qh!'
+
+            ! RESPONSE_M_X_H = - M_e,eleq 
+            if (my_id .eq. 0) write(*,*) 'Halo field: calculating response_m_xh...'
+            response_m_xh =0.0
+            response_m_xh(sr%a_ee%ind_start:sr%a_ee%ind_end,:) = - sr%aeq_el%loc_mat(:,:)
+            call MPI_AllREDUCE(MPI_IN_PLACE,response_m_xh,size(response_m_xh),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
+            if (my_id .eq. 0) write(*,*) '...DONE calculating response_m_xh!'
+
+            ! RESPONSE_M_V_H = matmul (M_eyi * JP) 
+            if (my_id .eq. 0) write(*,*) 'Halo field: calculating response_m_vh...'
+            call matrix_multiplication(my_id,sr%a_eyi,mat2=response_m_JP_i, res_mat_not_distr=response_m_vh)        
+            call MPI_AllREDUCE(MPI_IN_PLACE,response_m_vh,size(response_m_vh),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
+            if (my_id .eq. 0) write(*,*) '...DONE calculating response_m_vh!'
+          endif
 
           response_m_h =0.0
           response_m_h(sr%a_ee%ind_start:sr%a_ee%ind_end,:) = sr%a_ee%loc_mat(:,:)
@@ -3945,28 +4309,14 @@ module vacuum_response
           ! --- m_j_i =  matmul(a_eyi, m_d_i)
           call matrix_multiplication(my_id,sr%a_eyi,mat2=response_m_d_i,res_mat_not_distr=response_m_j_i)
           call MPI_AllREDUCE(MPI_IN_PLACE,response_m_j_i,size(response_m_j_i),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
+
           call  dealloc_distr(response_m_a_i)
           call  dealloc_distr(response_m_d_i)
-          
-          ! --- m_w_h = a_eye * fwtfw^-1 * J_w
-          if (.not. allocated(Jmat_w_rank)) allocate(Jmat_w_rank(sr%n_electrode_w-1,sr%nd_bez) )
-          Jmat_w_rank = sr%Jmat_w(1:sr%n_electrode_w-1,:)
-          call matrix_multiplication(my_id, sr%w_h, mat2_not_distr=Jmat_w_rank, res_mat_not_distr=response_m_w_h)
-          call MPI_AllREDUCE(MPI_IN_PLACE,response_m_w_h,size(response_m_w_h),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
-          
-          ! Minus sign as the wall-impinging current is considered with opposite normal
-          response_m_w_h = -response_m_w_h
+          call  dealloc_distr(response_m_WE_i)
+          call  dealloc_distr(response_m_WI_i)
+          call  dealloc_distr(response_m_JE_i) 
+          call  dealloc_distr(response_m_Wtot_i)   
 
-          ! --- m_u_h = - ael_eq * J_j
-          if (.not. allocated(Jmat_J_rank)) allocate(Jmat_J_rank(n_shell_curr_e,sr%nd_bez) )
-          Jmat_J_rank = sr%Jmat_J(1:n_shell_curr_e,:)
-          call matrix_multiplication(my_id, sr%aeq_el, mat2_not_distr=Jmat_J_rank, res_mat_not_distr=response_m_u_h)
-          call MPI_AllREDUCE(MPI_IN_PLACE,response_m_u_h,size(response_m_u_h),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)          
-          response_m_u_h = -response_m_u_h
-
-          if (.not. ALLOCATED(response_m_t_h)) allocate(response_m_t_h(sr%nd_bez, sr%nd_bez))
-          response_m_t_h(:,:) = response_m_w_h(:,:) + response_m_u_h(:,:)
-          
           deallocate( tmp_d_sii)
 
         else
@@ -4329,7 +4679,218 @@ module vacuum_response
     end if
     
   end subroutine distribute_coil_names
+
+  ! subroutine row_col_distrib(my_id, ntasks, dim , old_mat, new_mat, row_wise )
+
+  !   ! -- Converts a row-distributed matrix to a column distributed one (viceversa to be implemented)
+  !   use mpi_mod
+  !   implicit none
+  !   ! --- Routine parameters
+  !   integer, intent(in) :: my_id         !< Process ID
+  !   integer, intent(in) :: ntasks        !< Number of MPI tasks
+  !   integer, intent(in) :: dim(2)        !< Dimensions of matrix
+  !   logical, intent(in) :: row_wise      !< How to distribute the new matrix?
+  !   type(t_distrib_mat) , intent(in)    :: old_mat
+  !   type(t_distrib_mat) , intent(inout) :: new_mat
+  !   ! --- Local variables
+  !   integer             :: step_row , step_col , loc_size
+  !   integer             :: indmin_row(ntasks) , indmax_row(ntasks) , indmin_col(ntasks) , indmax_col(ntasks)
+  !   integer             :: status(MPI_STATUS_SIZE) , ierr, i , j
+  !   real*8, ALLOCATABLE :: buf_send(:,:), buf_recv(:,:)
+
+  !   ! Calculate indmin_row, indmax_row, indmin_col, indmax_col (all size ntasks)
+
+  !   !!! N.B. THIS WILL DIVIDE THE DIMENSIONS UNEVENLY FOR RECTANGULAR MATRICES
+
+  !   step_row = dim(1) / ntasks
+  !   step_col = dim(2) / ntasks
+
+  !   ! step_row = old_mat%step
+  !   ! step_col = old_mat%step
+
+  !   do i =1,ntasks
+  !     indmin_row(i) = 1 + (i-1) * step_row
+  !     indmax_row(i) = i * step_row 
+  !     ! The last task gets the larger chunk
+  !     if (i==ntasks) indmax_row(i) = dim(1)
+  !     indmin_col(i) = 1 + (i-1) * step_col 
+  !     indmax_col(i) = i * step_col
+  !     ! The last task gets the larger chunk
+  !     if (i==ntasks) indmax_col(i) = dim(2)
+  !   enddo
+    
+  !   ! ALLOCATE NEW_MAT MANUALLY
+
+  !   call MPI_COMM_SIZE(MPI_COMM_WORLD, ntasks, ierr)
+  !   if (allocated(new_mat%loc_mat)) call dealloc_distr(new_mat)
+
+  !   new_mat%step      = step_col
+
+  !   loc_size = indmax_col(my_id+1) - indmin_col(my_id+1) + 1
+  !   new_mat%row_wise  = .false.
+  !   new_mat%ind_start = indmin_col(my_id+1)
+  !   new_mat%ind_end   = indmax_col(my_id+1)
+  !   allocate( new_mat%loc_mat(dim(1), loc_size) )
+    
+  !   new_mat%loc_mat(:,:) = 0.d0
+  !   write(*,*) 'size new_mat%loc_mat , my_id', size(new_mat%loc_mat,1) , size(new_mat%loc_mat,2) , my_id
+  !   write(*,*) 'size old_mat%loc_mat , my_id', size(old_mat%loc_mat,1) , size(old_mat%loc_mat,2) , my_id
+
+  !   if (my_id .eq. 0) write(*,*) 'row_col_distrib: global dimensions=', dim(1) , dim(2)
+    
+  !   do i = 1, ntasks
+      
+  !     do j = 1, ntasks
+
+  !       if ( (i == j) .and. (i == my_id + 1) ) then
+          
+  !         ! We can just locally copy
+  !         new_mat%loc_mat(indmin_row(i):indmax_row(i),:) = &
+  !           old_mat%loc_mat(:,indmin_col(j):indmax_col(j))
+
+  !       else if ( my_id + 1 == i) then
+  !         ! We need to send
+
+  !         ! Allocate buf_send block (buffer for row-distributed matrix)
+  !         if (allocated(buf_send)) deallocate(buf_send)
+
+  !         ! The largest dimensions at last process will be on the row for old_mat and the column for new_mat
+  !         write(*,*) 'buf_send dimensions, my_id, indmax_row(i), indmin_row(i), indmax_col(j), indmin_col(j)', indmax_row(i)-indmin_row(i)+1 , indmax_col(j)-indmin_col(j)+1, my_id, indmax_row(i), indmin_row(i), indmax_col(j), indmin_col(j)
+  !         ! For i=1,j=4:
+  !         ! We are allocating as 7201 x 7202
+  !         allocate(buf_send(indmax_row(i)-indmin_row(i)+1, indmax_col(j)-indmin_col(j)+1))
+          
+  !         buf_send = old_mat%loc_mat(:,indmin_col(j):indmax_col(j))
+  !         call MPI_Send (buf_send, size(buf_send) , MPI_DOUBLE_PRECISION, j-1, 0 , MPI_COMM_WORLD, ierr ) 
+
+  !       else if ( my_id + 1 == j) then
+
+  !         ! We need to receive; note that i and j are used exchanged now!
+
+  !         if (allocated(buf_recv)) deallocate(buf_recv)
+  !         write(*,*) 'i,j,buf_recv dimensions, my_id, indmin_row(j), indmax_row(j), indmin_row(i), indmax_row(i), indmin_col(i), indmax_col(i), indmin_col(j), indmax_col(j)', i,j,indmax_row(j)-indmin_row(j)+1 , indmax_col(i)-indmin_col(i)+1, my_id, indmin_row(j), indmax_row(j), indmin_row(i), indmax_row(i), indmin_col(i), indmax_col(i), indmin_col(j), indmax_col(j)
+  !         allocate(buf_recv(indmax_row(j)-indmin_row(j)+1, indmax_col(i)-indmin_col(i)+1))
+  !         ! ex. i=1,j=4, 4 MPI procs
+  !         ! At proc. 4 buf_recv gets allocated as 7204 x 7199
+  !         ! But we sent something that is 7201 x 7202
+  !         buf_recv = 0.d0
+
+  !         call MPI_Recv( buf_recv, size(buf_recv), MPI_DOUBLE_PRECISION, i-1, 0, MPI_COMM_WORLD, status, ierr)
+
+  !         new_mat%loc_mat(indmin_row(j):indmax_row(j),indmin_col(i):indmax_col(i)) = buf_recv
+
+  !       end if
+
+  !     end do
+      
+  !   end do
+
+  ! end subroutine row_col_distrib
+
+  !> Converts a row-distributed matrix to a column distributed one (or the other way around)
+  subroutine row_col_distrib(my_id, ntasks, dim, old_mat, new_mat, row_wise)
+
+    use mpi_mod
+    
+    implicit none
+    
+    ! --- Routine parameters
+    integer, intent(in)                :: my_id    !< MPI rank
+    integer, intent(in)                :: ntasks   !< Number of MPI ranks
+    integer, intent(in)                :: dim(2)   !< Global dimensions of the matrix ! ############## not needed, should be taken from old_mat
+    logical, intent(in)                :: row_wise !< How to distribute the new matrix? ! ############### not needed, we just convert into the other format, respectively
+    type(t_distrib_mat), intent(in)    :: old_mat
+    type(t_distrib_mat), intent(inout) :: new_mat
+    
+    ! --- Local variables
+    integer             :: step_row, step_col, loc_size
+    integer             :: indmin_row(ntasks), indmax_row(ntasks), indmin_col(ntasks), indmax_col(ntasks)
+    integer             :: status(MPI_STATUS_SIZE), ierr, i ,j
+    real*8, allocatable :: buf_send(:,:), buf_recv(:,:)
+    
+    ! --- Convert row-wise distributed to colum-wise distributed representation
+    if ( old_mat%row_wise ) then
+      
+      ! --- Calculate distribution across matrices indmin_row, indmax_row, indmin_col, indmax_col (all size ntasks)
+      step_row = dim(1) / ntasks
+      step_col = dim(2) / ntasks
+      do i =1, ntasks
+        ! --- Matrix distribution in row-wise format
+        indmin_row(i) = 1 + (i-1) * step_row
+        indmax_row(i) = i * step_row
+        if (i==ntasks) indmax_row(i) = dim(1) ! The last task gets the larger chunk
+
+        ! --- Matrix distribution in colum-wise format
+        indmin_col(i) = 1 + (i-1) * step_col 
+        indmax_col(i) = i * step_col
+        if (i==ntasks) indmax_col(i) = dim(2) ! The last task gets the larger chunk
+      enddo
+      
+      ! --- Allocate and initialize the new matrix
+      call MPI_COMM_SIZE(MPI_COMM_WORLD, ntasks, ierr)
+      if (allocated(new_mat%loc_mat)) call dealloc_distr(new_mat)
+      new_mat%step         = step_col
+      new_mat%distrib      = .true.
+      loc_size             = indmax_col(my_id+1) - indmin_col(my_id+1) + 1
+      new_mat%row_wise     = .false.
+      new_mat%ind_start    = indmin_col(my_id+1)
+      new_mat%ind_end      = indmax_col(my_id+1)
+      new_mat%dim          = (/ dim(1) , dim(2)   /)
+      allocate( new_mat%loc_mat(dim(1), loc_size) )
+      new_mat%loc_mat(:,:) = 0.d0
+
+      write(*,*) 'size new_mat%loc_mat , my_id', size(new_mat%loc_mat,1) , size(new_mat%loc_mat,2) , my_id
+      write(*,*) 'size old_mat%loc_mat , my_id', size(old_mat%loc_mat,1) , size(old_mat%loc_mat,2) , my_id
+
+
+      ! --- Go through the matrix block-wise to convert
+      do i = 1, ntasks ! i=block row index
+        do j = 1, ntasks ! j=block column index
+          
+          ! --- This diagonal block remains on the same MPI rank, so we can just copy it locally
+          if ( (i == j) .and. (i == my_id + 1) ) then
+            
+            new_mat%loc_mat(indmin_row(i):indmax_row(i),:) = &
+              old_mat%loc_mat(:,indmin_col(j):indmax_col(j))
   
+          ! --- This off-diagonal block is local on the MPI rank i-1, we send to MPI rank j-1
+          else if ( my_id + 1 == i ) then
+
+            if (allocated(buf_send)) deallocate(buf_send)
+            write(*,*) 'send: i, j, indmax_row(i)-indmin_row(i)+1 , indmax_col(j)-indmin_col(j)+1, my_id', i , j, indmax_row(i)-indmin_row(i)+1, indmax_col(j)-indmin_col(j)+1, my_id 
+            allocate(buf_send(indmax_row(i)-indmin_row(i)+1, indmax_col(j)-indmin_col(j)+1))
+            buf_send = old_mat%loc_mat(:,indmin_col(j):indmax_col(j))
+            call MPI_Send (buf_send, size(buf_send) , MPI_DOUBLE_PRECISION, j-1, 0 , MPI_COMM_WORLD, ierr ) 
+            deallocate(buf_send)
+
+          ! --- This off-diagonal block is needed on MPI rank j-1, we receive from MPI rank i-1  
+          else if ( my_id + 1 == j ) then
+
+            if (allocated(buf_recv)) deallocate(buf_recv)
+            write(*,*) 'recv: i, j, indmax_row(i)-indmin_row(i)+1 , indmax_col(j)-indmin_col(j)+1, my_id', i , j, indmax_row(i)-indmin_row(i)+1, indmax_col(j)-indmin_col(j)+1, my_id 
+            allocate(buf_recv(indmax_row(i)-indmin_row(i)+1, indmax_col(j)-indmin_col(j)+1))
+            buf_recv = 0.d0
+            call MPI_Recv( buf_recv, size(buf_recv), MPI_DOUBLE_PRECISION, i-1, 0, MPI_COMM_WORLD, status, ierr)
+            ! if (my_id .eq. ntasks - 1) write(*,*) 'last rank: indmax_row(i)-indmin_row(i)+1, indmax_row(j)-indmin_row(j)+1', indmax_row(i)-indmin_row(i)+1, indmax_row(j)-indmin_row(j)+1
+            ! write(*,*) 'i,j,buf_recv dimensions, my_id, indmin_row(j), indmax_row(j), indmin_row(i), indmax_row(i), indmin_col(i), indmax_col(i), indmin_col(j), indmax_col(j)', i,j,indmax_row(j)-indmin_row(j)+1 , indmax_col(i)-indmin_col(i)+1, my_id, indmin_row(j), indmax_row(j), indmin_row(i), indmax_row(i), indmin_col(i), indmax_col(i), indmin_col(j), indmax_col(j)          
+            new_mat%loc_mat(indmin_row(i):indmax_row(i),:) = buf_recv
+            deallocate(buf_recv)
+  
+          end if
+  
+        end do ! j loop
+      end do ! i loop
+    
+    ! --- Convert column-wise to row-wise representation
+    else ! (i.e., old matrix was column wise)
+      
+      write(*,*) 'Conversion of column wise to row wise matrix not yet implemented.'
+      stop
+      
+    end if
+  
+  end subroutine row_col_distrib
+
 
 end module vacuum_response
 
