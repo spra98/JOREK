@@ -188,6 +188,8 @@ module vacuum
     ! Electrode mapping Matrices in Fourier space
     real*8, allocatable  :: Jmat_w(:,:) 
     real*8, allocatable  :: Jmat_J(:,:)
+    ! type(t_distrib_mat)  :: Jmat_w 
+    ! type(t_distrib_mat)  :: Jmat_J
 
     real*8,  allocatable :: xyzpot_w(:,:)
     real*8,  allocatable :: phi0_w(:,:)   !< Toroidal net wall current potentials

@@ -824,11 +824,17 @@ module vacuum_response
         ! write(*,*) 'Reading Jmat_real_w'
         ! call read_array_not_distr(filehandle, 'Jmat_real_w', (/sr%n_electrode_w,sr%n_pts_real_w/), disp, float2d=sr%Jmat_real_w, deb=.true.)
         ! write(*,*) 'Reading Jmat_real_J'
-        ! call read_array_not_distr(filehandle, 'Jmat_real_J', (/sr%n_electrode_J,sr%n_pts_real_J/), disp, float2d=sr%Jmat_real_J, deb=.true.)
+        ! call read_array_not_distr(filehandle, 'Jmat_real_J', (/sr%n_electrode_J,sr%n_pts_real_J/), disp, float2d=sr%Jmat_real_J, deb=.true.) 
         call read_array_not_distr(filehandle, 'Jmat_w', (/sr%n_electrode_w,sr%nd_bez /), disp, float2d=sr%Jmat_w, deb=.false.)
         call read_array_not_distr(filehandle, 'Jmat_J', (/sr%n_electrode_J,sr%nd_bez /), disp, float2d=sr%Jmat_J, deb=.false.)
+      endif   
 
-      end if   
+      ! READ JMAT AS DISTRIBUTED 
+
+      ! if (CARIDDI_mode) then
+      !   call read_array_par(filehandle, 'Jmat_w', (/sr%n_electrode_w,sr%nd_bez/),       disp, my_id,  sr%Jmat_w, .false., deb=.true.)
+      !   call read_array_par(filehandle, 'Jmat_J', (/sr%n_electrode_J,sr%nd_bez/),       disp, my_id,  sr%Jmat_J, .false., deb=.true.)
+      ! end if   
     endif
 
     if(my_id == 0 .and. .not. CARIDDI_mode) then
@@ -1149,7 +1155,7 @@ module vacuum_response
           ! Matrix -matrix multiplications
     
           glob_index_j = (i-1)*mat2%step
-          glob_index_i = my_id*mat2%step
+          glob_index_i = my_id*mat1%step ! R.S> Correcting from mat2%step to mat1%step
           do z = 1, size(mat1%loc_mat,1)
             do k = 1, size(tmp,2)
     
@@ -3391,7 +3397,7 @@ module vacuum_response
         if ( allocated(old_dIelec_J) ) deallocate(old_dIelec_J)
         allocate( old_dIelec_J(n_shell_curr_e) )
       end if   
-      if ( (.not. allocated(old_dIelec_w)) .or. (size(old_dIelec_w,1)/= n_wall_curr_e) ) then
+      if ( (.not. allocated(old_dIelec_w)) .or. (size(old_dIelec_w,1) /= n_wall_curr_e) ) then
         if ( allocated(old_dIelec_w) ) deallocate(old_dIelec_w)
         allocate( old_dIelec_w(n_wall_curr_e) )
       end if      
@@ -3552,8 +3558,8 @@ module vacuum_response
     else
 
       ! ---------------------------------------------------------------------------------------------------
-      ! ---------------------------- EDDY COUPLING ------------------------------------------------------ 
-      ! --------------------------------------------------------------------------------------------------
+      ! ----------------------------           EDDY COUPLING          ------------------------------------- 
+      ! ---------------------------------------------------------------------------------------------------
       if  (.not. allocated(dwall_curr_2)) allocate (dwall_curr_2(n_wall_curr))
       if ( vacuum_debug ) write(*,*) 'wall_curr(before)', sum(abs(wall_curr)), sum(wall_curr)    
         
@@ -4142,16 +4148,16 @@ module vacuum_response
               temp_m_WH_i%loc_mat(nnw,:) = tstep * sr%g_yiwe%loc_mat(nnw,:) / tmp_d_sii(nnw+my_id*temp_m_WH_i%step) 
             end do
             ! 1.5) Debug check
-            old_WH_i = 0.d0     
-            old_wh_i(temp_m_WH_i%ind_start:temp_m_WH_i%ind_end,:) = temp_m_WH_i%loc_mat(:,:)
-            call MPI_AllREDUCE(MPI_IN_PLACE,old_wh_i,size(old_wh_i),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
-            if (my_id .eq. 0) then 
-              open(unit=10, file="old_wh_i.txt", status="replace")
-              do i = 1, size(old_wh_i,1)
-                  write(10,'(*(ES24.16,1X))') (old_wh_i(i,j), j = 1, size(old_wh_i,2))
-              end do
-              close(10)
-            endif
+            ! old_WH_i = 0.d0     
+            ! old_wh_i(temp_m_WH_i%ind_start:temp_m_WH_i%ind_end,:) = temp_m_WH_i%loc_mat(:,:)
+            ! call MPI_AllREDUCE(MPI_IN_PLACE,old_wh_i,size(old_wh_i),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
+            ! if (my_id .eq. 0) then 
+            !   open(unit=10, file="old_wh_i.txt", status="replace")
+            !   do i = 1, size(old_wh_i,1)
+            !       write(10,'(*(ES24.16,1X))') (old_wh_i(i,j), j = 1, size(old_wh_i,2))
+            !   end do
+            !   close(10)
+            ! endif
 
             ! 2) Make matrix column-distributed
             dim_WH_i = (/  n_wall_curr_i , n_wall_curr_e  /)
@@ -4164,16 +4170,16 @@ module vacuum_response
             write(*,*) 'response_m_WH_i%dims and my_id', response_m_WH_i%dim(1) , response_m_WH_i%dim(2),  my_id
 
             ! 1.5) Debug check
-            new_WH_i = 0.d0     
-            new_wh_i(:,response_m_WH_i%ind_start:response_m_WH_i%ind_end) = response_m_WH_i%loc_mat(:,:)
-            call MPI_AllREDUCE(MPI_IN_PLACE,new_wh_i,size(new_wh_i),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
-            if (my_id .eq. 0) then 
-              open(unit=10, file="new_wh_i.txt", status="replace")
-              do i = 1, size(new_wh_i,1)
-                  write(10,'(*(ES24.16,1X))') (new_wh_i(i,j), j = 1, size(new_wh_i,2))
-              end do
-              close(10)
-            endif
+            ! new_WH_i = 0.d0     
+            ! new_wh_i(:,response_m_WH_i%ind_start:response_m_WH_i%ind_end) = response_m_WH_i%loc_mat(:,:)
+            ! call MPI_AllREDUCE(MPI_IN_PLACE,new_wh_i,size(new_wh_i),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
+            ! if (my_id .eq. 0) then 
+            !   open(unit=10, file="new_wh_i.txt", status="replace")
+            !   do i = 1, size(new_wh_i,1)
+            !       write(10,'(*(ES24.16,1X))') (new_wh_i(i,j), j = 1, size(new_wh_i,2))
+            !   end do
+            !   close(10)
+            ! endif
           
             ! --- Calculate response_m_JP_i 
             do nnw = 1,size(temp_m_JP_i%loc_mat,1)
@@ -4290,7 +4296,8 @@ module vacuum_response
 
             ! RESPONSE_M_X_H = - M_e,eleq 
             if (my_id .eq. 0) write(*,*) 'Halo field: calculating response_m_xh...'
-            response_m_xh =0.0
+            if (.not. allocated(response_m_xh)) allocate(response_m_xh(sr%nd_bez, n_shell_curr_e))
+            response_m_xh(:,:) =0.0
             response_m_xh(sr%a_ee%ind_start:sr%a_ee%ind_end,:) = - sr%aeq_el%loc_mat(:,:)
             call MPI_AllREDUCE(MPI_IN_PLACE,response_m_xh,size(response_m_xh),MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD,ierr)
             if (my_id .eq. 0) write(*,*) '...DONE calculating response_m_xh!'
@@ -4839,8 +4846,8 @@ module vacuum_response
       allocate( new_mat%loc_mat(dim(1), loc_size) )
       new_mat%loc_mat(:,:) = 0.d0
 
-      write(*,*) 'size new_mat%loc_mat , my_id', size(new_mat%loc_mat,1) , size(new_mat%loc_mat,2) , my_id
-      write(*,*) 'size old_mat%loc_mat , my_id', size(old_mat%loc_mat,1) , size(old_mat%loc_mat,2) , my_id
+      ! write(*,*) 'size new_mat%loc_mat , my_id', size(new_mat%loc_mat,1) , size(new_mat%loc_mat,2) , my_id
+      ! write(*,*) 'size old_mat%loc_mat , my_id', size(old_mat%loc_mat,1) , size(old_mat%loc_mat,2) , my_id
 
 
       ! --- Go through the matrix block-wise to convert
@@ -4857,7 +4864,7 @@ module vacuum_response
           else if ( my_id + 1 == i ) then
 
             if (allocated(buf_send)) deallocate(buf_send)
-            write(*,*) 'send: i, j, indmax_row(i)-indmin_row(i)+1 , indmax_col(j)-indmin_col(j)+1, my_id', i , j, indmax_row(i)-indmin_row(i)+1, indmax_col(j)-indmin_col(j)+1, my_id 
+            !write(*,*) 'send: i, j, indmax_row(i)-indmin_row(i)+1 , indmax_col(j)-indmin_col(j)+1, my_id', i , j, indmax_row(i)-indmin_row(i)+1, indmax_col(j)-indmin_col(j)+1, my_id 
             allocate(buf_send(indmax_row(i)-indmin_row(i)+1, indmax_col(j)-indmin_col(j)+1))
             buf_send = old_mat%loc_mat(:,indmin_col(j):indmax_col(j))
             call MPI_Send (buf_send, size(buf_send) , MPI_DOUBLE_PRECISION, j-1, 0 , MPI_COMM_WORLD, ierr ) 
@@ -4867,7 +4874,7 @@ module vacuum_response
           else if ( my_id + 1 == j ) then
 
             if (allocated(buf_recv)) deallocate(buf_recv)
-            write(*,*) 'recv: i, j, indmax_row(i)-indmin_row(i)+1 , indmax_col(j)-indmin_col(j)+1, my_id', i , j, indmax_row(i)-indmin_row(i)+1, indmax_col(j)-indmin_col(j)+1, my_id 
+            !write(*,*) 'recv: i, j, indmax_row(i)-indmin_row(i)+1 , indmax_col(j)-indmin_col(j)+1, my_id', i , j, indmax_row(i)-indmin_row(i)+1, indmax_col(j)-indmin_col(j)+1, my_id 
             allocate(buf_recv(indmax_row(i)-indmin_row(i)+1, indmax_col(j)-indmin_col(j)+1))
             buf_recv = 0.d0
             call MPI_Recv( buf_recv, size(buf_recv), MPI_DOUBLE_PRECISION, i-1, 0, MPI_COMM_WORLD, status, ierr)
