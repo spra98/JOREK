@@ -34,8 +34,10 @@ module vacuum
   real*8, allocatable :: old_dpsibnd_vec(:)              !< Previous delta Psi values required for time-stepping with zeta/=0
   real*8, allocatable :: old_dIelec_w(:)                 !< Previous dIelec_w
   real*8, allocatable :: old_dIelec_J(:)                 !< Previous dIelec_J
-  real*8, allocatable :: I_elec_w(:)                     !< Wall electrode current for halo coupling
-  real*8, allocatable :: I_elec_J(:)                     !< Shell electrode current for halo coupling
+  real*8, allocatable :: dIelec_w(:)                     !< Delta Wall electrode current for halo coupling
+  real*8, allocatable :: dIelec_J(:)                     !< Delta Shell electrode current for halo coupling
+  real*8, allocatable :: Ielec_w(:)                     !< Wall electrode current for halo coupling
+  real*8, allocatable :: Ielec_J(:)                     !< Shell electrode current for halo coupling
 
   !> Data type for response matrices distributed over the MPI tasks
   type :: t_distrib_mat
@@ -625,7 +627,22 @@ module vacuum
           if ( allocated(dwall_curr_e) ) deallocate(dwall_curr_e)
           allocate( dwall_curr_e(n_wall_curr_e) )
           read(file_handle) dwall_curr_e(:)
-        
+
+          if ( allocated(Ielec_J) ) deallocate(Ielec_J)
+          allocate( Ielec_J(n_shell_curr_e) )
+          read(file_handle) Ielec_J(:)
+
+          if ( allocated(Ielec_w) ) deallocate(Ielec_w)
+          allocate( Ielec_w(n_wall_curr_e) )
+          read(file_handle) Ielec_w(:)
+
+          if ( allocated(dIelec_J) ) deallocate(dIelec_J)
+          allocate( dIelec_J(n_shell_curr_e) )
+          read(file_handle) dIelec_J(:)
+
+          if ( allocated(dIelec_w) ) deallocate(dIelec_w)
+          allocate( dIelec_w(n_wall_curr_e) )
+          read(file_handle) dIelec_w(:)
         else
 
           read(file_handle) n_wall_curr, n_dof_starwall
@@ -763,6 +780,22 @@ module vacuum
            if ( allocated(dwall_curr_e) ) deallocate(dwall_curr_e)
            allocate( dwall_curr_e(n_wall_curr_e) )
            call HDF5_array1D_reading(file_id,dwall_curr_e,"dwall_curr_e")
+
+           if ( allocated(Ielec_J) ) deallocate(Ielec_J)
+           allocate( Ielec_J(n_shell_curr_e) )
+           call HDF5_array1D_reading(file_id,Ielec_J,"Ielec_J")
+
+           if ( allocated(Ielec_w) ) deallocate(Ielec_w)
+           allocate( Ielec_w(n_wall_curr_e) )
+           call HDF5_array1D_reading(file_id,Ielec_w,"Ielec_w")
+
+           if ( allocated(dIelec_J) ) deallocate(dIelec_J)
+           allocate( dIelec_J(n_shell_curr_e) )
+           call HDF5_array1D_reading(file_id,dIelec_J,"dIelec_J")
+
+           if ( allocated(dIelec_w) ) deallocate(dIelec_w)
+           allocate( dIelec_w(n_wall_curr_e) )
+           call HDF5_array1D_reading(file_id,dIelec_w,"dIelec_w")
 
        else  
 
@@ -937,7 +970,8 @@ module vacuum
           if ( (.not. allocated(wall_curr_i)) .or. (.not. allocated(dwall_curr_i)) .or.                    &
           (.not. allocated(wall_curr_e)) .or. (.not. allocated(dwall_curr_e))      .or.  &
           (.not. allocated(old_dpsibnd_vec)) .or. (.not. allocated(old_dIelec_J)) .or. &
-          (.not. allocated(old_dIelec_w)) ) then
+          (.not. allocated(old_dIelec_w)) .or. (.not. allocated(Ielec_J)) .or. &
+          (.not. allocated(Ielec_w)) .or. (.not. allocated(dIelec_J)) .or. (.not. allocated(dIelec_w)) ) then
             write(*,*) 'ERROR in mod_vacuum.f90:export_restart_vacuum: Arrays not allocated.'
             stop
           end if
@@ -952,6 +986,10 @@ module vacuum
         
           write(file_handle) dwall_curr_e(:)
 
+          write(file_handle) Ielec_J(:)
+          write(file_handle) Ielec_w(:)
+          write(file_handle) dIelec_J(:)
+          write(file_handle) dIelec_w(:)
 
         else
 
@@ -1036,7 +1074,8 @@ module vacuum
           if ( (.not. allocated(wall_curr_i)) .or. (.not. allocated(dwall_curr_i)) .or. &
                 (.not. allocated(wall_curr_e)) .or. (.not. allocated(dwall_curr_e)) .or. &
            (.not. allocated(old_dpsibnd_vec)) .or. (.not. allocated(old_dIelec_w)) &
-           .or. (.not. allocated(old_dIelec_J)) ) then
+           .or. (.not. allocated(old_dIelec_J)) .or. (.not. allocated(Ielec_J)) .or. &
+          (.not. allocated(Ielec_w)) .or. (.not. allocated(dIelec_J)) .or. (.not. allocated(dIelec_w))) then
           write(*,*) 'ERROR in mod_vacuum.f90:export_restart_vacuum: Arrays not allocated.'
           stop
           end if
@@ -1063,6 +1102,10 @@ module vacuum
           call HDF5_array1D_saving(file_id,dwall_curr_i,n_wall_curr_i,"dwall_curr_i"//char(0))
           call HDF5_array1D_saving(file_id,wall_curr_e,n_wall_curr_e,"wall_curr_e"//char(0))
           call HDF5_array1D_saving(file_id,dwall_curr_e,n_wall_curr_e,"dwall_curr_e"//char(0))
+          call HDF5_array1D_saving(file_id,Ielec_J,n_shell_curr_e,"Ielec_J"//char(0))
+          call HDF5_array1D_saving(file_id,Ielec_w,n_wall_curr_e,"Ielec_w"//char(0))
+          call HDF5_array1D_saving(file_id,dIelec_J,n_shell_curr_e,"dIelec_J"//char(0))
+          call HDF5_array1D_saving(file_id,dIelec_w,n_wall_curr_e,"dIelec_w"//char(0))
         else
           call HDF5_array1D_saving(file_id,wall_curr,n_wall_curr,"wall_curr"//char(0))
           call HDF5_array1D_saving(file_id,dwall_curr,n_wall_curr,"dwall_curr"//char(0))
@@ -1247,6 +1290,19 @@ module vacuum
           
           if ( allocated(dwall_curr_e) ) deallocate(dwall_curr_e)
           allocate( dwall_curr_e(n_wall_curr_e) )
+
+          if (allocated(Ielec_J)) deallocate(Ielec_J)
+          allocate(Ielec_J(n_shell_curr_e))
+
+          if (allocated(Ielec_w)) deallocate(Ielec_w)
+          allocate(Ielec_w(n_wall_curr_e))
+
+          if (allocated(dIelec_J)) deallocate(dIelec_J)
+          allocate(dIelec_J(n_shell_curr_e))
+
+          if (allocated(dIelec_w)) deallocate(dIelec_w)
+          allocate(dIelec_w(n_wall_curr_e))  
+
                     if ( my_id == 1 ) then
             write(*,*) '*************************************'
             write(*,*) '* DONE Allocating halo-related variables *'
@@ -1349,6 +1405,12 @@ module vacuum
         call MPI_BCAST(dwall_curr_i,n_wall_curr_i,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
         call MPI_BCAST(wall_curr_e,n_wall_curr_e,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
         call MPI_BCAST(dwall_curr_e,n_wall_curr_e,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
+        call MPI_BCAST(Ielec_J,n_shell_curr_e,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
+        call MPI_BCAST(Ielec_w,n_wall_curr_e,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
+        call MPI_BCAST(dIelec_J,n_shell_curr_e,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
+        call MPI_BCAST(dIelec_w,n_wall_curr_e,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
+
+
                    if ( my_id == 1 ) then
             write(*,*) '*************************************'
             write(*,*) '* DONE Broadcasting wall_curr_i, wall_curr_e my_id=1 *'
@@ -1615,13 +1677,13 @@ module vacuum
   allocate(I_elec_w_complete(sr%n_electrode_w))
   I_elec_w_complete = 0.d0
 
-  if (allocated(I_elec_J)) deallocate(I_elec_J)
-  allocate(I_elec_J(sr%n_electrode_J-1))
-  I_elec_J = 0.d0
+  if (allocated(Ielec_J)) deallocate(Ielec_J)
+  allocate(Ielec_J(sr%n_electrode_J-1))
+  Ielec_J = 0.d0
 
-  if (allocated(I_elec_w)) deallocate(I_elec_w)
-  allocate(I_elec_w(sr%n_electrode_w-1))
-  I_elec_w = 0.d0 
+  if (allocated(Ielec_w)) deallocate(Ielec_w)
+  allocate(Ielec_w(sr%n_electrode_w-1))
+  Ielec_w = 0.d0 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   select case (mapping)
     
@@ -2179,8 +2241,8 @@ module vacuum
         I_elec_w_complete(i) = sum(sr%Jmat_real_w(i,:)*Jn_CAR(:))
       end do
 
-      I_elec_J = I_elec_J_complete(1:sr%n_electrode_J-1)
-      I_elec_w = I_elec_w_complete(1:sr%n_electrode_w-1)
+      Ielec_J = I_elec_J_complete(1:sr%n_electrode_J-1)
+      Ielec_w = I_elec_w_complete(1:sr%n_electrode_w-1)
       
       if (debug_Jn) then
         ! Debugging
@@ -2342,8 +2404,8 @@ module vacuum
 
       endif
 
-      I_elec_J = I_elec_J_complete(1:sr%n_electrode_J-1)
-      I_elec_w = I_elec_w_complete(1:sr%n_electrode_w-1)
+      Ielec_J = I_elec_J_complete(1:sr%n_electrode_J-1)
+      Ielec_w = I_elec_w_complete(1:sr%n_electrode_w-1)
 
       if (debug_Jn) then
 
@@ -2466,12 +2528,12 @@ module vacuum
   if (my_id .eq. 0) write(*,*) 'Finished get_Ielec_halo'
   end subroutine get_Ielec_halo
   
-  subroutine halo_time_stepping(my_id, node_list, element_list, bnd_elm_list, bnd_node_list, response_R_zj, response_R_psis, jn_bez, debug, dzjbnd_vec, dpsibnd_vec,dIelec_w, Ielec_w_now, dIelec_J, Ielec_J_now)
+  subroutine halo_time_stepping(my_id, node_list, element_list, bnd_elm_list, bnd_node_list, response_R_zj, response_R_psis, debug, dzjbnd_vec, dpsibnd_vec)
 
   use data_structure
   use gauss
   use mod_settings
-  use phys_module, only:  PI, n_period, F0
+  use phys_module, only:  PI, n_period, F0, index_now, index_start
   use basis_at_gaussian, only: H1, H1_s, HZ
   use constants, only: MU_ZERO
   use mod_basisfunctions
@@ -2483,19 +2545,14 @@ module vacuum
   type (type_bnd_node_list),    intent(in)    :: bnd_node_list
   real*8,                       intent(out)   :: response_R_zj(:,:)
   real*8,                       intent(out)   :: response_R_psis(:,:)
-  real*8,                       intent(out)   :: jn_bez(:)
   logical,                      intent(in)    :: debug
   real*8, OPTIONAL,             intent(in)    :: dzjbnd_vec(:)
   real*8, OPTIONAL,             intent(in)    :: dpsibnd_vec(:)
-  real*8, OPTIONAL,             intent(out)   :: dIelec_w(:)
-  real*8, OPTIONAL,             intent(out)   :: Ielec_w_now(:)
-  real*8, OPTIONAL,             intent(out)   :: dIelec_J(:)
-  real*8, OPTIONAL,             intent(out)   :: Ielec_J_now(:)
 
   !> LOCAL VARIABLES
   real*8              :: deltaJn(sr%nd_bez), deltaIelec_full(sr%n_electrode_w), Ielec_now_full(sr%n_electrode_w)
   integer             :: Npts_tot, npol,jj,mp, ms, i, j
-  real*8, allocatable :: fact_R_zj(:), fact_R_psis(:), R_zj(:,:), R_psis(:,:), J_normal(:), test_sig(:), bez_sig(:), phi_t
+  real*8, allocatable :: fact_R_zj(:), fact_R_psis(:), R_zj(:,:), R_psis(:,:), J_normal(:), jn_bez(:), test_sig(:), bez_sig(:), phi_t
   real*8, allocatable :: identity_mat(:,:), real2bez(:,:)
   real*8   :: psi_s(n_gauss*n_plane), zj(n_gauss*n_plane), R(n_gauss), Z(n_gauss), R_s(n_gauss), Z_s(n_gauss),vec_inside(2), grad_t(2), G(4, n_degrees)
   real*8   :: phi_vec(n_plane), R_c, Z_c
@@ -2516,6 +2573,7 @@ module vacuum
   if (.not. ALLOCATED(fact_R_psis)) allocate(fact_R_psis(npts_tot))
   if (.not. ALLOCATED(fact_R_zj)) allocate(fact_R_zj(npts_tot))
   if (.not. ALLOCATED(J_normal)) allocate(J_normal(npts_tot))
+  if (.not. ALLOCATED(jn_bez)) allocate(jn_bez(sr%nd_bez))
   if (.not. ALLOCATED(test_sig)) ALLOCATE(test_sig(npts_tot))
   if (.not. ALLOCATED(bez_sig)) ALLOCATE(bez_sig(sr%nd_bez))
       
@@ -2610,9 +2668,9 @@ module vacuum
           zj((mp-1)*n_gauss+1:mp*n_gauss) &
           / sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out  
                           
-      J_normal (index_start_realsp : index_end_realsp) = &
-        ( ( zj((mp-1)*n_gauss+1:mp*n_gauss) * psi_s((mp-1)*n_gauss+1:mp*n_gauss)) ) &
-                                  /sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out
+      ! J_normal (index_start_realsp : index_end_realsp) = &
+      !   ( ( zj((mp-1)*n_gauss+1:mp*n_gauss) * psi_s((mp-1)*n_gauss+1:mp*n_gauss)) ) &
+      !                             /sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out
     enddo
 
   enddo  ! end s_bndelem
@@ -2695,43 +2753,43 @@ module vacuum
     if (my_id .eq. 0) write(*,*) 'Done writing Jn_bez.dat' 
 
   endif
-  if (present(dIelec_w) .and. PRESENT(dIelec_J)) then 
-    deltaJn(:) = 0.d0
-    ! Get delta Jn
-    do i =1 ,sr%nd_bez
-      deltaJn(i) = sum(response_R_zj(i,:) * dzjbnd_vec(:)) + sum(response_R_psis(i,:) * dpsibnd_vec(:))
-    enddo
-    deltaIelec_full(:) = 0.d0
-    ! Get delta I_elec by using conversion matrix
-    do i =1,sr%n_electrode_w
-    deltaIelec_full(i) = -sum(sr%Jmat_w(i,:)*deltaJn(:))
-    end do
-    dIelec_w(:) = deltaIelec_full(1:sr%n_electrode_w-1)
+  
+  ! --- COMPUTE DELTAS
 
-    deltaIelec_full(:) = 0.d0
-    ! Get delta I_elec by using conversion matrix
-    do i =1,sr%n_electrode_J
-    deltaIelec_full(i) = sum(sr%Jmat_J(i,:)*deltaJn(:))
-    end do
-    dIelec_J(:) = deltaIelec_full(1:sr%n_electrode_J-1)
-  endif
+  if (present(dzjbnd_vec) .and. present(dpsibnd_vec)) then 
 
-  if (present(Ielec_w_now) .and. present(Ielec_J_now)) then 
+    if (index_now <= 1) then 
+      dIelec_J = 0.d0 
+      dIelec_w = 0.d0 
+    else 
+      deltaJn(:) = 0.d0
+      ! Get delta Jn
+      do i =1 ,sr%nd_bez
+        deltaJn(i) = sum(response_R_zj(i,:) * dzjbnd_vec(:)) + sum(response_R_psis(i,:) * dpsibnd_vec(:))
+      enddo
+      deltaIelec_full(:) = 0.d0
+      ! Get delta I_elec at step (n-1) by using conversion matrix from CARIDDI
+      do i =1,sr%n_electrode_w
+      deltaIelec_full(i) = -sum(sr%Jmat_w(i,:)*deltaJn(:))
+      end do
+      dIelec_w(:) = deltaIelec_full(1:sr%n_electrode_w-1)
+
+      deltaIelec_full(:) = 0.d0
+      ! Get delta I_elec at step (n-1) by using conversion matrix
+      do i =1,sr%n_electrode_J
+      deltaIelec_full(i) = sum(sr%Jmat_J(i,:)*deltaJn(:))
+      end do
+      dIelec_J(:) = deltaIelec_full(1:sr%n_electrode_J-1)
+    endif
+    
+    ! ---- UPDATE THE PRESENT ELECTRODE CURRENTS
     ! WALL
-    Ielec_now_full(:) = 0.d0
-    Ielec_w_now(:)=0.d0 
-    do i =1,sr%n_electrode_w
-      Ielec_now_full(i) = -sum(sr%Jmat_w(i,:)*jn_bez(:))
-    end do   
-    Ielec_w_now(:) = Ielec_now_full(1:sr%n_electrode_w-1)
+    Ielec_w(:) = Ielec_w(:) + dIelec_w(:)
     ! SHELL
-    Ielec_now_full(:) = 0.d0
-    Ielec_J_now(:)=0.d0 
-    do i =1,sr%n_electrode_J
-      Ielec_now_full(i) = sum(sr%Jmat_J(i,:)*jn_bez(:))
-    end do   
-    Ielec_J_now(:) = Ielec_now_full(1:sr%n_electrode_J-1)
+    Ielec_J(:) = Ielec_J(:) + dIelec_J(:)
+
   endif
+
   end subroutine halo_time_stepping
 
  

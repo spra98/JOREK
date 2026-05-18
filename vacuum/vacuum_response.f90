@@ -2195,7 +2195,6 @@ module vacuum_response
     real*8, allocatable :: response_R_zj(:,:), response_R_psis(:,:), J_normal(:), jn_bez(:), test_sig(:), bez_sig(:), phi_t
     real*8, allocatable :: response_m_t_h_zj(:,:) , response_m_t_h_psis(:,:)
     real*8, ALLOCATABLE :: contrib_iwe(:), contrib_ieleq(:), contrib_yi(:), contrib_dyi(:)
-    real*8              :: dIelec_w(n_wall_curr_e), dIelec_J(n_shell_curr_e)
     type(type_bnd_element) :: bndelem_s
     type(type_element)     :: elem_s    
     type(type_node)        :: node_k, node_s
@@ -2512,9 +2511,7 @@ module vacuum_response
     if ( resistive_wall .and.  (sr%n_tor>0) ) then 
       if (.not. halo_freeb) call evolve_wall_currents(my_id, psibnd_vec, dpsibnd_vec, A_MAT=a_mat)
       if (halo_freeb) then 
-        dIelec_w(:) = 0.d0 
-        dIelec_J(:) = 0.d0
-        call evolve_wall_currents(my_id, psibnd_vec, dpsibnd_vec, dzjbnd_vec, dIelec_w, dIelec_J, a_mat)
+        call evolve_wall_currents(my_id, psibnd_vec, dpsibnd_vec, dzjbnd_vec, a_mat)
       endif
     endif
 
@@ -2593,7 +2590,7 @@ module vacuum_response
           if (.not. allocated(diag_el_eq) ) allocate(diag_el_eq(n_shell_curr_e))
           diag_el_eq(:) = 1.d0
           call extended_matrix_vector(my_id, -1.d0, sr%aeq_el, diag_el_eq, &
-                I_elec_J(:), .TRUE., contrib_ieleq, .true.)
+                Ielec_J(:), .TRUE., contrib_ieleq, .true.)
 
           if (my_id .eq. 0) write(*,*) 'Writing contrib_ieleq_bez.dat'
           open(unit=12, file="contrib_ieleq_bez.dat", status="replace", action="write", form="formatted")
@@ -2661,7 +2658,7 @@ module vacuum_response
     !$omp   response_m_ph, response_m_qh, response_m_xh, response_m_vh,                                                                        &
     !$omp   bext_tan, I_coils, wall_curr, dwall_curr, psibnd_vec, dpsibnd_vec,psibnd_coils,                   &
     !$omp  wall_curr_i, dwall_curr_i, wall_curr_e, dwall_curr_e, halo_imp, F0, npol, npts_tot, J_normal, fact_mu0,                   &
-    !$omp I_elec_w, I_elec_J, dIelec_w, dIelec_J, &
+    !$omp Ielec_w, Ielec_J, dIelec_w, dIelec_J, &
 #ifdef __GFORTRAN__
     !$omp   wgauss_copy,                                                                                      &
 #endif
@@ -2806,7 +2803,7 @@ module vacuum_response
                       !   .and. l_dof.eq.1 .and. i_vertex.eq.1 .and. i_dof.eq.1 .and. i_starwall.eq.1 &
                       !   .and. j_node_bnd.eq.1 .and. j_dof.eq.1 .and. j_starwall.eq.1) write(*,*) 'Done Performing products for halo implicit'
 
-                        else
+                        else  ! Eddy coupling
                           amat_contrib = - common_prefactor * response_m_e(i_resp, j_resp)
                         endif
 
@@ -2833,9 +2830,9 @@ module vacuum_response
 
                     rhs_contrib = sum( response_m_h(i_resp,:) * psibnd_vec(:))                     &
                               + sum( response_m_j_i(i_resp,:) * dpsibnd_vec(:))                    &
-                              + sum(response_m_ph(i_resp,:)*I_elec_w(:))                           &
+                              + sum(response_m_ph(i_resp,:)*Ielec_w(:))                           &
                               + sum(response_m_qh(i_resp,:)*dIelec_w(:))                           &
-                              + sum(response_m_xh(i_resp,:)*I_elec_J(:))                           &
+                              + sum(response_m_xh(i_resp,:)*Ielec_J(:))                           &
                               + sum(response_m_vh(i_resp,:)*dIelec_J(:))                               
                   else
                   
@@ -2875,7 +2872,6 @@ module vacuum_response
     if ( allocated(psibnd_vec ) ) deallocate( psibnd_vec  )
     if ( allocated(dpsibnd_vec) ) deallocate( dpsibnd_vec )
     if (allocated(dzjbnd_vec))    deallocate( dzjbnd_vec  )
-    if (allocated(J_normal)) deallocate(J_normal)
 
   end subroutine vacuum_boundary_integral
   
@@ -3067,6 +3063,38 @@ module vacuum_response
             dwall_curr_e(k) = 0.d0
           end do
         end if
+
+        if ( .not. allocated(Ielec_w) ) then
+          write(*,*) 'Allocating Ielec_w with', n_wall_curr_e
+          allocate( Ielec_w(n_wall_curr_e) )
+          do k = 1, n_wall_curr_e
+            Ielec_w(k) = 0.d0
+          end do
+        end if       
+
+        if ( .not. allocated(Ielec_J) ) then
+          write(*,*) 'Allocating Ielec_J with', n_shell_curr_e
+          allocate( Ielec_J(n_shell_curr_e) )
+          do k = 1, n_shell_curr_e
+            Ielec_J(k) = 0.d0
+          end do
+        end if 
+
+        if ( .not. allocated(dIelec_w) ) then
+          write(*,*) 'Allocating dIelec_w with', n_wall_curr_e
+          allocate( dIelec_w(n_wall_curr_e) )
+          do k = 1, n_wall_curr_e
+            dIelec_w(k) = 0.d0
+          end do
+        end if       
+
+        if ( .not. allocated(dIelec_J) ) then
+          write(*,*) 'Allocating dIelec_J with', n_shell_curr_e
+          allocate( dIelec_J(n_shell_curr_e) )
+          do k = 1, n_shell_curr_e
+            dIelec_J(k) = 0.d0
+          end do
+        end if        
 
       else
         ! ======================= EDDY COUPLING ===================================
@@ -3299,7 +3327,7 @@ module vacuum_response
   
   
   !> Perform the time-evolution of the wall currents (resistive wall).
-  subroutine evolve_wall_currents(my_id, psibnd_vec, dpsibnd_vec, dzjbnd_vec, dIelec_w, dIelec_J, a_mat)
+  subroutine evolve_wall_currents(my_id, psibnd_vec, dpsibnd_vec, dzjbnd_vec,  a_mat)
     
     use phys_module, only: index_now, index_start, nstep, resistive_wall, time_evol_theta, time_evol_zeta, tstep
     use mpi_mod
@@ -3314,8 +3342,6 @@ module vacuum_response
     real*8,  intent(in) :: psibnd_vec (n_dof_starwall) !< Vector of Psi boundary values
     real*8,  intent(in) :: dpsibnd_vec(n_dof_starwall) !< Vector of deltaPsi boundary values
     real*8, optional, intent(in) :: dzjbnd_vec(n_dof_starwall)
-    real*8, optional, intent(out):: dIelec_w(n_wall_curr_e)
-    real*8, optional, intent(out):: dIelec_J(n_shell_curr_e)
     type(type_SP_MATRIX):: a_mat
     
     ! --- Local variables
@@ -3332,9 +3358,7 @@ module vacuum_response
     real *8, allocatable :: inv_tmp_d_sii(:)
     real*8,  ALLOCATABLE :: diag_1(:)
     real*8,  ALLOCATABLE :: resp_R_zj, resp_R_psis
-    real*8               :: Ielec_w_now(n_wall_curr_e)
-    real*8               :: Ielec_J_now(n_shell_curr_e)   
-    real*8, ALLOCATABLE  :: response_R_psis(:,:), response_R_zj(:,:), jn_bez(:), wall_curr_i_dbg(:) 
+    real*8, ALLOCATABLE  :: response_R_psis(:,:), response_R_zj(:,:), wall_curr_i_dbg(:) 
 
 
     if (halo_freeb .and. CARIDDI_mode) then
@@ -3359,22 +3383,16 @@ module vacuum_response
       ! Calculate deltaIel_w from deltazj and deltapsi and Iel_w at present
       if (.not. ALLOCATED(response_R_psis)) allocate(response_R_psis(sr%nd_bez, sr%nd_bez))
       if (.not. ALLOCATED(response_R_zj)) allocate(response_R_zj(sr%nd_bez, sr%nd_bez))
-      if (.not. ALLOCATED(jn_bez)) allocate(jn_bez(sr%nd_bez))
-
-      call halo_time_stepping(my_id, node_list, element_list, bnd_elm_list, bnd_node_list, &
-                              response_R_zj=response_R_zj, response_R_psis=response_R_psis, jn_bez=jn_bez, debug=.true., &
-                              dzjbnd_vec=dzjbnd_vec, dpsibnd_vec=dpsibnd_vec, &
-                               dIelec_w=dIelec_w, Ielec_w_now = Ielec_w_now, dIelec_J=dIelec_J, Ielec_J_now=Ielec_J_now) 
       
-      if (index_now <= 1) then 
-        dIelec_J = 0.d0 
-        dIelec_w = 0.d0 
-      endif
-
+      ! --- EVOLVE ELECTRODE CURRENTS
+      call halo_time_stepping(my_id, node_list, element_list, bnd_elm_list, bnd_node_list, &
+                              response_R_zj=response_R_zj, response_R_psis=response_R_psis, debug=.false., &
+                              dzjbnd_vec=dzjbnd_vec, dpsibnd_vec=dpsibnd_vec) 
+    
       if (my_id .eq. 0) then 
         OPEN(UNIT=12, FILE="I_elec_w_from_time_stepping.dat", ACTION="write", STATUS="replace")
         DO k=1,sr%n_electrode_w-1
-          WRITE(12,*) Ielec_w_now(k)
+          WRITE(12,*) Ielec_w(k)
         END DO
 
         OPEN(UNIT=12, FILE="delta_I_elec_w_from_time_stepping.dat", ACTION="write", STATUS="replace")
@@ -3481,7 +3499,7 @@ module vacuum_response
       !> corresponds to matrix WH_i in documentation
       if (my_id.eq.0) write(*,*) "Calculating the new Gi*Ielec_w contribution to wall_curr_i"
       call extended_matrix_vector(my_id, tstep, sr%g_yiwe, inv_tmp_d_sii, &
-                                Ielec_w_now(:), .false. , dwall_curr_i, .false. )
+                                Ielec_w(:), .false. , dwall_curr_i, .false. )
       !> corresponds to matrix JP_i in documentation
       if (my_id.eq.0) write(*,*) 'Calling for -sr%d_yieqe*inv_tmp_d_sii*old_dIelec_J'                                
       call extended_matrix_vector(my_id, -zeta, sr%d_yieqe, inv_tmp_d_sii, &
@@ -3497,7 +3515,6 @@ module vacuum_response
       !if (my_id.eq.0) write(*,*) 'DONE Calling for sr%a_yie*inv_tmp_d_sii*old_dpsibnd_vec' 
 
       dwall_curr_i(:) = dwall_curr_i(:) + dwall_curr_i2(:)
-      if (index_now <= 1 ) dwall_curr_i = 0.d0
       if (index_now <= 1 ) dwall_curr_i = 0.d0
       wall_curr_i(:) = wall_curr_i(:) + dwall_curr_i(:) 
       if (my_id == 0) then
@@ -3521,20 +3538,18 @@ module vacuum_response
         21 format(1x, 'distributed', L2, ',rowwise?', L2, ',ind_start of chunk:', I4, ',ind_end of chunk:', I4, ', step' , I4)
       endif
       
-      ! Initialize to 0.d0 at each time step before computing
-      if (.not. allocated(I_elec_J)) ALLOCATE(I_elec_J(n_shell_curr_e))
-      I_elec_J = 0.d0
-      if (.not. allocated(I_elec_w)) ALLOCATE(I_elec_w(n_wall_curr_e))
-      I_elec_w = 0.d0 
+      ! ! Initialize to 0.d0 at each time step before computing
+      ! if (.not. allocated(Ielec_J)) ALLOCATE(Ielec_J(n_shell_curr_e))
+      ! Ielec_J = 0.d0
+      ! if (.not. allocated(Ielec_w)) ALLOCATE(Ielec_w(n_wall_curr_e))
+      ! Ielec_w = 0.d0 
 
-      I_elec_w(:) = Ielec_w_now
-      I_elec_J(:) = Ielec_J_now
       wall_curr_e(:) = 0.d0
 
       if (.not. allocated(diag_1)) ALLOCATE(diag_1(n_wall_curr_e))
       diag_1(:) = 1.d0
       call extended_matrix_vector(my_id, 1.d0, sr%fwtfw_inv, diag_1, &
-                                  I_elec_w, .true., wall_curr_e, .true.)  
+                                  Ielec_w, .true., wall_curr_e, .true.)  
 
       ! Print out wall_curr_e
       if (my_id == 0) then
@@ -3545,12 +3560,12 @@ module vacuum_response
         CLOSE(12)      
         OPEN(UNIT=12, FILE="I_elec_w.dat", ACTION="write", STATUS="replace")
         DO k=1,n_wall_curr_e
-          WRITE(12,*) I_elec_w(k)
+          WRITE(12,*) Ielec_w(k)
         END DO
         CLOSE(12)
         OPEN(UNIT=12, FILE="I_elec_J.dat", ACTION="write", STATUS="replace")
         DO k=1,n_shell_curr_e
-          WRITE(12,*) I_elec_J(k)
+          WRITE(12,*) Ielec_J(k)
         END DO
         CLOSE(12)
       endif
@@ -3930,7 +3945,7 @@ module vacuum_response
     real*8,ALLOCATABLE :: response_m_JEWJ_CPSI_I(:,:), response_m_wtotww_cpsi_i(:,:)
     real*8,ALLOCATABLE :: response_curr_contrib_dpsi(:,:), response_curr_contrib_dzj(:,:)
     real*8,ALLOCATABLE :: response_m_JEWJ_czj_i(:,:), response_m_wtotww_czj_i(:,:), response_m_t_h_czj_i(:,:)
-    real*8,ALLOCATABLE :: response_R_psis(:,:), response_R_zj(:,:), jn_bez(:)
+    real*8,ALLOCATABLE :: response_R_psis(:,:), response_R_zj(:,:)
     real*8,ALLOCATABLE :: old_wh_i(:,:), new_wh_i(:,:)
     type(t_distrib_mat)  :: response_m_d                   !< \f$\hat{D}\f$ in the documentation
     type(t_distrib_mat)  :: response_m_a                   !< \f$\hat{A}\f$ in the documentation
@@ -4080,8 +4095,7 @@ module vacuum_response
           if (present(node_list)) then 
             if (.not. ALLOCATED(response_R_psis)) allocate(response_R_psis(sr%nd_bez, sr%nd_bez))
             if (.not. ALLOCATED(response_R_zj)) allocate(response_R_zj(sr%nd_bez, sr%nd_bez))
-            if (.not. ALLOCATED(jn_bez)) allocate(jn_bez(sr%nd_bez))
-            call halo_time_stepping(my_id, node_list, element_list, bnd_elm_list, bnd_node_list, response_R_zj=response_R_zj, response_R_psis=response_R_psis, jn_bez=jn_bez, debug=.false.)
+            call halo_time_stepping(my_id, node_list, element_list, bnd_elm_list, bnd_node_list, response_R_zj=response_R_zj, response_R_psis=response_R_psis, debug=.false.)
           
             ! --- m_w_h = a_eye * fwtfw^-1 * J_w
             if (.not. allocated(Jmat_w_rank)) allocate(Jmat_w_rank(sr%n_electrode_w-1,sr%nd_bez) )

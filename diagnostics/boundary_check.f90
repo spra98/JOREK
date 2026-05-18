@@ -135,7 +135,6 @@ subroutine boundary_check(my_id)
       ! B_par_v_eddy(:) = 0.d0
       ! B_par_v_halo(:) = 0.d0
       
-      if (.not. ALLOCATED(I_elec_J)) allocate(I_elec_J(sr%n_electrode_J-1))
       ! --- Select one STARWALL harmonic
 !$omp parallel do                                                                                  &
 !$omp   schedule(dynamic)                                                                          &
@@ -143,7 +142,7 @@ subroutine boundary_check(my_id)
 !$omp   shared(node_list, element_list, m_elm, s_pt, t_pt, sr, bndelem_m, bnd_node_list, H1,       &
 !$omp     resistive_wall, starwall_equil_coils, my_id, psibnd_vec, psibnd_coils, wall_curr,        &
 !$omp     bext_tan, I_coils, B_par_v, B_par_v_eddy, B_par_v_halo, R, R_s, R_t, Z, Z_s, Z_t, &
-!$omp     xjac, e_par, B_par, step, halo_freeb, wall_curr_i, wall_curr_e, I_elec_j)                &
+!$omp     xjac, e_par, B_par, step, halo_freeb, wall_curr_i, wall_curr_e, Ielec_j)                &
 !$omp   private(l_starwall, i_vertex, i_dof, l_tor, P, P_s, P_t, P_st, P_ss, P_tt, P_R, P_Z, B_pol,&
 !$omp     i_node, i_node_bnd, i_size, i_resp_old, i_resp, i_resp_0, basfunc_i, B_par_v_tmp, B_par_v_eddy_tmp, B_par_v_halo_tmp)
       L_LS: do l_starwall = 1, sr%n_tor
@@ -199,7 +198,7 @@ subroutine boundary_check(my_id)
                       + sum( sr%a_ee%loc_mat(i_resp-step*my_id,:) * (psibnd_vec(:)-psibnd_coils(:)) )&
                       + sum( sr%a_eyi%loc_mat(i_resp-step*my_id,:) * wall_curr_i(:) )                   &
                       + sum( sr%a_eye%loc_mat(i_resp-step*my_id,:) * wall_curr_e(:) )                &
-                      - sum( sr%aeq_el%loc_mat(i_resp-step*my_id,:) * I_elec_J(:)   )                &
+                      - sum( sr%aeq_el%loc_mat(i_resp-step*my_id,:) * Ielec_J(:)   )                &
                       - sum( bext_tan(i_resp_0, :) * I_coils(:) ) )
 
                     B_par_v_eddy_tmp = basfunc_i * (                                                      &
@@ -229,7 +228,7 @@ subroutine boundary_check(my_id)
                       + sum( sr%a_ee%loc_mat(i_resp-step*my_id,:) * (psibnd_vec(:)-psibnd_coils(:)) )&
                       + sum( sr%a_eyi%loc_mat(i_resp-step*my_id,:) * wall_curr_i(:) )                   &
                       + sum( sr%a_eye%loc_mat(i_resp-step*my_id,:) * wall_curr_e(:) )                &
-                      - sum( sr%aeq_el%loc_mat(i_resp-step*my_id,:) * I_elec_J(:)   )  )              
+                      - sum( sr%aeq_el%loc_mat(i_resp-step*my_id,:) * Ielec_J(:)   )  )              
 
                     B_par_v_eddy_tmp = basfunc_i * (                                                      &
                       + sum( sr%a_ee%loc_mat(i_resp-step*my_id,:) * (psibnd_vec(:)-psibnd_coils(:)) )&
