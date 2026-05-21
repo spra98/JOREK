@@ -3992,7 +3992,6 @@ module vacuum_response
                  .or. ( old_reswall .neqv. resistive_wall     ) &
                  .or. ( .not. allocated(response_d_b_i)       ) &
                  .or. ( .not. allocated(response_d_c_i)       ) &
-                 .or. ( .not. allocated(response_m_e_i)        ) &
                  .or. ( .not. allocated(response_m_h)         ) &
                  .or. ( .not. allocated(response_m_j_i)         ) &
                  .or. ( .not. allocated(response_m_eh)         )   &
