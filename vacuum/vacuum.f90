@@ -2550,19 +2550,19 @@ module vacuum
   real*8, OPTIONAL,             intent(in)    :: dpsibnd_vec(:)
 
   !> LOCAL VARIABLES
-  real*8              :: deltaJn(sr%nd_bez), deltaIelec_full(sr%n_electrode_w), Ielec_now_full(sr%n_electrode_w)
+  real*8              :: deltaJn(sr%nd_bez), deltaIelec_full(sr%n_electrode_w), Ielec_now_full(sr%n_electrode_w), Ielec_w_now(sr%n_electrode_w-1), Ielec_J_now(sr%n_electrode_J-1)
   integer             :: Npts_tot, npol,jj,mp, ms, i, j
   real*8, allocatable :: fact_R_zj(:), fact_R_psis(:), R_zj(:,:), R_psis(:,:), J_normal(:), jn_bez(:), test_sig(:), bez_sig(:), phi_t
-  real*8, allocatable :: identity_mat(:,:), real2bez(:,:)
+  real*8, allocatable :: identity_mat(:,:), real2bez(:,:), fact_R_zj_point, fact_R_psis_point
   real*8   :: psi_s(n_gauss*n_plane), zj(n_gauss*n_plane), R(n_gauss), Z(n_gauss), R_s(n_gauss), Z_s(n_gauss),vec_inside(2), grad_t(2), G(4, n_degrees)
   real*8   :: phi_vec(n_plane), R_c, Z_c
   type(type_bnd_element) :: bndelem_s, bndelem_e
   type(type_element)     :: elem_s    
   type(type_node)        :: node_k, node_s
-  integer             :: s_bndelem, s_vertex, s_node, s_dof, s_dir, s_tor
-  real*8   :: s_size, j_size, fact_mu0, sign_out, e_size
-  integer             :: index_start_realsp, index_end_realsp, real_entry_index
-  integer             :: e_bndelem, e_vertex, e_node, e_node_bnd, e_dof, e_index, e_dir, e_tor, e_harm, e_resp
+  integer             :: s_bndelem, s_vertex, s_node, s_dof, s_dir, s_tor,k
+  real*8   :: s_size, ss_size, j_size, fact_mu0, sign_out, e_size, psi_prec, zj_prec
+  integer             :: index_start_realsp, index_end_realsp, real_entry_index, s_resp, s_harm
+  integer             :: e_bndelem, e_vertex, e_node, e_node_bnd, s_node_bnd, e_dof, e_index, e_dir, e_tor, e_harm, e_resp
 
 
   ! Writing transformation matrix real-space -> Bezier
@@ -2597,8 +2597,12 @@ module vacuum
   fact_R_zj   = 0.d0 
   J_normal    = 0.d0
   jn_bez      = 0.d0
+  fact_mu0 = 1.d0/mu_zero
+  R_zj = 0.d0 
+  R_psis = 0.d0
 
   do s_bndelem = 1,bnd_elm_list%n_bnd_elements
+
     bndelem_s = bnd_elm_list%bnd_element(s_bndelem)
     elem_s    = element_list%element(bndelem_s%element)
     psi_s = 0.d0
@@ -2609,6 +2613,7 @@ module vacuum
     Z_s   = 0.d0
 
     do s_vertex = 1, 2 ! (loop over nodes in element s_bndelem)
+      
       do s_dof = 1, 2 ! (loop over node dofs)
         s_node      = bndelem_s%vertex(s_vertex)
         node_s      = node_list%node(s_node)
@@ -2622,12 +2627,15 @@ module vacuum
 
         do mp=1,n_plane
           do s_tor = 1, n_tor ! (loop over toroidal harmonics)
+            ! Get values at previous t step
+            psi_prec = node_s%values(s_tor,s_dir,var_psi) - node_s%deltas(s_tor,s_dir,var_psi)
+            zj_prec =  node_s%values(s_tor,s_dir,var_zj)  - node_s%deltas(s_tor,s_dir,var_zj)
             ! Chunks of size n_gauss * n_plane
             psi_s((mp-1)*n_gauss+1:mp*n_gauss) =    psi_s((mp-1)*n_gauss+1:mp*n_gauss) + &
-            node_s%values(s_tor,s_dir,var_psi) * s_size*H1_s(s_vertex,s_dof,:) * HZ(s_tor,mp)
+                                                    psi_prec * s_size*H1_s(s_vertex,s_dof,:) * HZ(s_tor,mp)
 
             zj((mp-1)*n_gauss+1:mp*n_gauss)    =    zj((mp-1)*n_gauss+1:mp*n_gauss) + &
-            node_s%values(s_tor,s_dir,var_zj) * s_size*H1(s_vertex,s_dof,:) * HZ(s_tor,mp)
+                                                    zj_prec * s_size*H1(s_vertex,s_dof,:) * HZ(s_tor,mp)
           enddo            
         enddo
 
@@ -2650,80 +2658,75 @@ module vacuum
         Z_c    = Z_c + node_k%x(1,j,2) * elem_s%size(i,j) * G(i,j)
       enddo
     enddo  
+
     vec_inside = (/ R_c - R(2), Z_c - Z(2) /)       ! vector pointing towards the domain
     !--- Find out correct sign of the normal (it has to point outwards the domain)
     grad_t     = (/ -Z_s(2) , R_s(2) /)     ! gradient of the coordinate t (normal to the boundary here) 
     ! grad_t could point either outwards or inwards depending on the orientation of the bnd_element!
     sign_out   = -1.d0 * sign( 1.d0, ( vec_inside(1)*grad_t(1) + vec_inside(2)*grad_t(2) ) )  ! (+1 if normal outwards)
+    
+    do s_vertex = 1, 2 ! (loop over nodes in element s_bndelem)
+      s_node_bnd  = bndelem_s%bnd_vertex(s_vertex)
+      do s_dof = 1, 2 ! (loop over node dofs)
+          ss_size = bndelem_s%size(s_vertex,s_dof)
+        do ms = 1,n_gauss
+          do mp=1,n_plane
 
-    do mp = 1, n_plane
-      index_start_realsp =  (s_bndelem-1)*n_gauss+1+(mp-1)*npol
-      index_end_realsp   =   s_bndelem*n_gauss+(mp-1)*npol
+            ! Active loops:
+            ! s_bndelem
+            ! s_vertex 
+            ! s_dof
+            ! ms
+            ! mp
 
-      fact_R_zj (index_start_realsp : index_end_realsp)  = &
-        psi_s((mp-1)*n_gauss+1:mp*n_gauss) &
-        / sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out    
+            ! We are sitting on a localized Gauss point in the whole mesh
 
-      fact_R_psis (index_start_realsp : index_end_realsp)  = &
-          zj((mp-1)*n_gauss+1:mp*n_gauss) &
-          / sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out  
-                          
-      ! J_normal (index_start_realsp : index_end_realsp) = &
-      !   ( ( zj((mp-1)*n_gauss+1:mp*n_gauss) * psi_s((mp-1)*n_gauss+1:mp*n_gauss)) ) &
-      !                             /sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out
+            fact_R_zj_point   = &
+                    psi_s ((mp-1)*n_gauss+ms) / sqrt(R_s(ms)**2.d0 + Z_s(ms)**2.d0) / (F0*R(ms)) * sign_out   
+
+            fact_R_psis_point   = &
+                zj( (mp-1)*n_gauss+ms ) / sqrt(R_s(ms)**2.d0 + Z_s(ms)**2.d0) / (F0*R(ms)) * sign_out             
+
+            do s_harm = 1, sr%n_tor
+              s_tor  = sr%i_tor(s_harm)
+
+              ! Real space index
+              real_entry_index = n_gauss*(s_bndelem-1)+ ms + (mp-1)*npol
+              ! Bezier space index
+              s_resp   = (bnd_node_list%bnd_node(s_node_bnd)%index_starwall(1) - 1)*sr%n_tor0 &
+                            + bnd_node_list%bnd_node(s_node_bnd)%n_dof*(s_harm-1)              &
+                            + bnd_node_list%bnd_node(s_node_bnd)%index_starwall(s_dof)             &
+                            - bnd_node_list%bnd_node(s_node_bnd)%index_starwall(1) + 1
+            
+              R_zj( real_entry_index, s_resp ) = &
+                      fact_mu0*fact_R_zj_point &
+                    * ss_size * H1(s_vertex,s_dof,ms) * HZ(s_tor,mp)                  
+
+              R_psis( real_entry_index, s_resp ) = &
+                      fact_mu0*fact_R_psis_point &
+                    * ss_size * H1_s(s_vertex,s_dof,ms) * HZ(s_tor,mp)
+
+            enddo  ! s_harm
+          enddo  ! mp
+        enddo  ! ms
+      enddo  ! s_dof
+    enddo  ! s_vertex
+    
+    do mp=1,n_plane 
+
+       index_start_realsp =  (s_bndelem-1)*n_gauss+1+(mp-1)*npol
+       index_end_realsp   =   s_bndelem*n_gauss+(mp-1)*npol
+       ! Compute the reference J_normal
+       J_normal (index_start_realsp : index_end_realsp) = &
+          ( ( zj((mp-1)*n_gauss+1:mp*n_gauss) * psi_s((mp-1)*n_gauss+1:mp*n_gauss)) ) &
+                   / sqrt(R_s(:)**2.d0 + Z_s(:)**2.d0) / (F0*R(:)) * sign_out
+
     enddo
-
-  enddo  ! end s_bndelem
-      
-
-  ! Calculate the coefficients' matrix
-  fact_mu0 = 1.d0/mu_zero
-  R_zj = 0.d0 
-  R_psis = 0.d0
+  enddo   ! s_bndelem
+  
+  ! Convert the matrices to Bezier space
   response_R_zj = 0.d0 
   response_R_psis = 0.d0
-
-  do e_bndelem = 1,bnd_elm_list%n_bnd_elements 
-    ! Select bnd element
-    bndelem_e = bnd_elm_list%bnd_element(e_bndelem)
-    do e_vertex = 1,2
-      e_node      = bndelem_e%vertex(e_vertex)
-      e_node_bnd  = bndelem_e%bnd_vertex(e_vertex)
-      do e_dof = 1,2
-        e_dir       = bndelem_e%direction(e_vertex,e_dof)
-        e_index     = node_list%node(e_node)%index(e_dir)
-        e_size      = bndelem_e%size(e_vertex,e_dof)
-        do e_harm = 1, sr%n_tor
-          e_tor  = sr%i_tor(e_harm)
-          ! Loop over real pts
-          do s_bndelem = 1,bnd_elm_list%n_bnd_elements
-            do mp=1,n_plane
-              do ms=1,n_gauss
-                ! Build matrices
-                real_entry_index = n_gauss*(s_bndelem-1)+ ms + (mp-1)*npol
-                ! First index to switch is the node dofs, then harmonics, the nodes
-                e_resp   = (bnd_node_list%bnd_node(e_node_bnd)%index_starwall(1) - 1)*sr%n_tor0 &
-                              + bnd_node_list%bnd_node(e_node_bnd)%n_dof*(e_harm-1)              &
-                              + bnd_node_list%bnd_node(e_node_bnd)%index_starwall(e_dof)             &
-                              - bnd_node_list%bnd_node(e_node_bnd)%index_starwall(1) + 1
-            
-                R_zj( real_entry_index, e_resp ) = &
-                      fact_mu0*fact_R_zj( real_entry_index ) &
-                    * e_size * H1(e_vertex,e_dof,ms) * HZ(e_tor,mp)                  
-
-                R_psis( real_entry_index, e_resp ) = &
-                      fact_mu0*fact_R_psis( real_entry_index ) &
-                    * e_size * H1_s(e_vertex,e_dof,ms) * HZ(e_tor,mp)
-
-              enddo 
-            enddo 
-          enddo 
-        enddo 
-      enddo 
-    enddo 
-  enddo
-
-  ! Convert the matrices to Bezier space
   response_R_zj = MATMUL(real2bez,R_zj) 
   response_R_psis = MATMUL(real2bez, R_psis )
   
@@ -2733,6 +2736,21 @@ module vacuum
   do jj = 1,sr%nd_bez
     Jn_bez(jj) = sum(real2bez(jj,:) * J_normal(:))
   enddo
+  
+  Ielec_now_full(:) = 0.d0 
+  Ielec_w_now(:) = 0.d0 
+  Ielec_J_now(:) = 0.d0 
+
+  ! Compute I_elec from physics (at the previous time step!)
+  do i =1,sr%n_electrode_w
+    Ielec_now_full(i) = -sum(sr%Jmat_w(i,:)*Jn_bez(:))
+  end do
+  Ielec_w_now(:) = Ielec_now_full(1:sr%n_electrode_w-1)
+
+  do i =1,sr%n_electrode_J
+    Ielec_now_full(i) = sum(sr%Jmat_J(i,:)*Jn_bez(:))
+  end do
+  Ielec_J_now(:) = Ielec_now_full(1:sr%n_electrode_J-1)
 
   if (debug) then 
     if (my_id .eq. 0) write(*,*) 'HALO TIME STEPPING: Writing J_normal_halo_time_stepping.dat'
@@ -2759,6 +2777,8 @@ module vacuum
   if (present(dzjbnd_vec) .and. present(dpsibnd_vec)) then 
 
     if (index_now <= 1) then 
+      ! Ielec_w(:) = Ielec_w_now(:) 
+      ! Ielec_J(:) = Ielec_J_now(:)
       dIelec_J = 0.d0 
       dIelec_w = 0.d0 
     else 
@@ -2782,11 +2802,92 @@ module vacuum
       dIelec_J(:) = deltaIelec_full(1:sr%n_electrode_J-1)
     endif
     
+    if (index_now .eq. 2) then 
+
+      OPEN(UNIT=12, FILE="I_elec_w_pre_2_stepping.dat", ACTION="write", STATUS="replace")
+      DO k=1,sr%n_electrode_w-1
+        WRITE(12,*) Ielec_w(k)
+      END DO
+
+      OPEN(UNIT=12, FILE="delta_I_elec_w_1_stepping.dat", ACTION="write", STATUS="replace")
+      DO k=1,sr%n_electrode_w-1
+        WRITE(12,*) dIelec_w(k)
+      END DO
+
+      OPEN(UNIT=12, FILE="I_elec_w_now_1.dat", ACTION="write", STATUS="replace")
+      DO k=1,sr%n_electrode_w-1
+        WRITE(12,*) Ielec_w_now(k)
+      END DO
+
+      OPEN(UNIT=12, FILE="I_elec_J_now_1.dat", ACTION="write", STATUS="replace")
+      DO k=1,sr%n_electrode_J-1
+        WRITE(12,*) Ielec_J_now(k)
+      END DO
+
+    endif 
+
+    if (index_now .eq. 3) then 
+
+      OPEN(UNIT=12, FILE="I_elec_w_pre_3_stepping.dat", ACTION="write", STATUS="replace")
+      DO k=1,sr%n_electrode_w-1
+        WRITE(12,*) Ielec_w(k)
+      END DO
+
+      OPEN(UNIT=12, FILE="delta_I_elec_w_2_stepping.dat", ACTION="write", STATUS="replace")
+      DO k=1,sr%n_electrode_w-1
+        WRITE(12,*) dIelec_w(k)
+      END DO
+
+      OPEN(UNIT=12, FILE="I_elec_w_now_2.dat", ACTION="write", STATUS="replace")
+      DO k=1,sr%n_electrode_w-1
+        WRITE(12,*) Ielec_w_now(k)
+      END DO
+
+      OPEN(UNIT=12, FILE="I_elec_J_now_2.dat", ACTION="write", STATUS="replace")
+      DO k=1,sr%n_electrode_J-1
+        WRITE(12,*) Ielec_J_now(k)
+      END DO
+
+    endif 
+    
+    if (index_now .eq. 4) then 
+      OPEN(UNIT=12, FILE="I_elec_w_now_3.dat", ACTION="write", STATUS="replace")
+      DO k=1,sr%n_electrode_w-1
+        WRITE(12,*) Ielec_w_now(k)
+      END DO
+
+      OPEN(UNIT=12, FILE="I_elec_J_now_3.dat", ACTION="write", STATUS="replace")
+      DO k=1,sr%n_electrode_J-1
+        WRITE(12,*) Ielec_J_now(k)
+      END DO
+    endif
     ! ---- UPDATE THE PRESENT ELECTRODE CURRENTS
     ! WALL
     Ielec_w(:) = Ielec_w(:) + dIelec_w(:)
     ! SHELL
     Ielec_J(:) = Ielec_J(:) + dIelec_J(:)
+
+    if (index_now .eq. 2) then 
+      OPEN(UNIT=12, FILE="I_elec_w_post_2_stepping.dat", ACTION="write", STATUS="replace" )
+      DO k=1,sr%n_electrode_w-1
+        WRITE(12,*) Ielec_w(k)
+      END DO
+    endif
+
+    if (index_now .eq. 3) then 
+      OPEN(UNIT=12, FILE="I_elec_w_post_3_stepping.dat", ACTION="write", STATUS="replace" )
+      DO k=1,sr%n_electrode_w-1
+        WRITE(12,*) Ielec_w(k)
+      END DO
+    endif
+
+    !  instant n : I(n-1) --> I(n)  ALL DELTAS ARE DELTA(n-1)
+
+  
+
+    ! M_CAR * sum(response_R_zj(i,:) * dzjbnd_vec(:)) + sum(response_R_psis(i,:) * dpsibnd_vec(:)) =
+
+    ! Ielec_w (t2) - Ielec_w (t1)
 
   endif
 

@@ -61,7 +61,11 @@ subroutine boundary_check(my_id)
   call tr_allocate(B_par_v,1,sr%n_tor,"B_par_v",CAT_GRID)
   call tr_allocate(B_par_v_eddy,1,sr%n_tor,"B_par_v_eddy",CAT_GRID)
   call tr_allocate(B_par_v_halo,1,sr%n_tor,"B_par_v_halo",CAT_GRID)
-
+  if(my_id == 0) then
+    write(*,*) '************************************'
+    write(*,*) '*    initializing                  *'
+    write(*,*) '************************************'
+  endif
   val_integral(:) = 0.d0
   err_integral(:) = 0.d0
   val_integral_eddy(:) = 0.d0
@@ -74,7 +78,19 @@ subroutine boundary_check(my_id)
   B_par_v_halo(:) = 0.d0
   i_resp_0        = 0 
 
+  if(my_id == 0) then
+    write(*,*) '************************************'
+    write(*,*) '*    call det_psibnd_vec           *'
+    write(*,*) '************************************'
+  endif
+
   call det_psibnd_vec(bnd_node_list, node_list, psibnd_vec, dpsibnd_vec, psibnd_coils)
+
+  if(my_id == 0) then
+    write(*,*) '************************************'
+    write(*,*) '*    start bnd_elems loop           *'
+    write(*,*) '************************************'
+  endif
 
   ! --- For every boundary element, do...
   L_MB: do m_bndelem = 1, bnd_elm_list%n_bnd_elements

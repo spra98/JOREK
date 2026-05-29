@@ -2519,7 +2519,7 @@ module vacuum_response
     old_dpsibnd_vec(:) = dpsibnd_vec(:)
     if (halo_freeb) then 
       old_dIelec_J(:)   = dIelec_J(:)
-      old_dIelec_w(:)    = dIelec_w(:)
+      old_dIelec_w(:)   = dIelec_w(:)
     endif
 
     if ( vacuum_debug ) then
@@ -3388,7 +3388,49 @@ module vacuum_response
       call halo_time_stepping(my_id, node_list, element_list, bnd_elm_list, bnd_node_list, &
                               response_R_zj=response_R_zj, response_R_psis=response_R_psis, debug=.false., &
                               dzjbnd_vec=dzjbnd_vec, dpsibnd_vec=dpsibnd_vec) 
-    
+      
+      ! ---- Debug deltas
+      if (my_id .eq. 0) then 
+
+        if ( index_now .eq. 2 ) then
+
+          OPEN(UNIT=12, FILE="I_elec_w_2.dat", ACTION="write", STATUS="replace")
+          DO k=1,sr%n_electrode_w-1
+            WRITE(12,*) Ielec_w(k)
+          END DO
+
+         OPEN(UNIT=12, FILE="delta_I_elec_w_2.dat", ACTION="write", STATUS="replace")
+          DO k=1,sr%n_electrode_w-1
+            WRITE(12,*) dIelec_w(k)
+          END DO 
+
+          OPEN(UNIT=12, FILE="I_elec_J_2.dat", ACTION="write", STATUS="replace")
+          DO k=1,sr%n_electrode_J-1
+            WRITE(12,*) Ielec_J(k)
+          END DO
+
+          OPEN(UNIT=12, FILE="delta_I_elec_J_2.dat", ACTION="write", STATUS="replace")
+          DO k=1,sr%n_electrode_J-1
+            WRITE(12,*) dIelec_J(k)
+          END DO  
+
+        endif 
+
+        if ( index_now .eq. 3 ) then 
+
+          OPEN(UNIT=12, FILE="I_elec_w_3.dat", ACTION="write", STATUS="replace")
+          DO k=1,sr%n_electrode_w-1
+            WRITE(12,*) Ielec_w(k)
+          END DO
+
+          OPEN(UNIT=12, FILE="I_elec_J_3.dat", ACTION="write", STATUS="replace")
+          DO k=1,sr%n_electrode_J-1
+            WRITE(12,*) Ielec_J(k)
+          END DO      
+
+        endif
+      endif  
+
       if (my_id .eq. 0) then 
         OPEN(UNIT=12, FILE="I_elec_w_from_time_stepping.dat", ACTION="write", STATUS="replace")
         DO k=1,sr%n_electrode_w-1
@@ -3527,22 +3569,12 @@ module vacuum_response
  
       ! ------------------------------------  CROSSING DOFS ------------------------------------------------
 
-      ! Get electrode current from Jn
-      !call get_Ielec_halo(node_list, element_list, bnd_elm_list, bnd_node_list, 'gauss', my_id, a_mat%i_tor_min, a_mat%i_tor_max)
-
-
       ! iwe = (FwtFw)^-1 * iel_w
 
       if (vacuum_debug .and. my_id .eq. 0) then
         write(21,*) 'FwtFw: infos', sr%fwtfw_inv%distrib, sr%fwtfw_inv%row_wise, sr%fwtfw_inv%ind_start, sr%fwtfw_inv%ind_end, sr%fwtfw_inv%step
         21 format(1x, 'distributed', L2, ',rowwise?', L2, ',ind_start of chunk:', I4, ',ind_end of chunk:', I4, ', step' , I4)
       endif
-      
-      ! ! Initialize to 0.d0 at each time step before computing
-      ! if (.not. allocated(Ielec_J)) ALLOCATE(Ielec_J(n_shell_curr_e))
-      ! Ielec_J = 0.d0
-      ! if (.not. allocated(Ielec_w)) ALLOCATE(Ielec_w(n_wall_curr_e))
-      ! Ielec_w = 0.d0 
 
       wall_curr_e(:) = 0.d0
 
