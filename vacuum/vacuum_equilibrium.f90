@@ -233,6 +233,11 @@ module vacuum_equilibrium
       wall_curr_e     = 0.d0
       potentials_real = 0.d0
       potentials_real(i_start_pf:i_end_pf) =  I_coils(i_start_pf:i_end_pf) * mu_zero
+      if (my_id .eq. 0) then 
+        do i=i_start_pf,i_end_pf
+          write(*,*) 'I_coils(', i, ')=', I_coils(i)
+        enddo
+      endif
 
       offset = sr%ind_start_coils
 
@@ -241,7 +246,7 @@ module vacuum_equilibrium
         do i = 1, n_wall_curr_i
           if ( (i>=sr%s_ww_ii_inv%ind_start) .and. (i<=sr%s_ww_ii_inv%ind_end) ) then
             wall_curr_i(i) = & 
-            sum(sr%s_ww_ii_inv%loc_mat(i-my_id*sr%s_ww_ii_inv%step,offset:offset+sr%ncoil -1) *potentials_real(:))
+            sum(sr%s_ww_ii_inv%loc_mat(i-my_id*sr%s_ww_ii_inv%step,offset:offset+sr%ncoil -1) * potentials_real(:))
           endif
         end do    
         call MPI_ALLReduce(MPI_IN_PLACE, wall_curr_i, size(wall_curr_i),MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,ierr) 
@@ -254,6 +259,20 @@ module vacuum_equilibrium
         end do    
         call MPI_ALLReduce(MPI_IN_PLACE, wall_curr, size(wall_curr),MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,ierr)
     
+      endif
+
+      if (my_id .eq. 0) then
+        write(*,*) 'sr%n_coil=', sr%ncoil
+        open(unit=10, file="I_coils.dat", status="replace")
+        do i=1,sr%ncoil
+          write(10,*) I_coils(i)
+        enddo
+        close(10)
+        open(unit=10, file="potentials_real.dat", status="replace")
+        do i=1,sr%ncoil
+          write(10,*) potentials_real(i)
+        enddo
+        close(10)
       endif
 
     endif

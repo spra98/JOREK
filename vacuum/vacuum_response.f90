@@ -852,7 +852,7 @@ module vacuum_response
     ! --- Import normalization
     sr%a_ee%loc_mat(:,:) = sr%a_ee%loc_mat(:,:) * 2.d0*PI
     if (CARIDDI_mode .and. halo_freeb) then
-      ! Change of sign (check documentation!) 
+      ! Change of sign to make it consistent with eddy coupling (check documentation!) 
       sr%a_yie%loc_mat(:,:)= -sr%a_yie%loc_mat(:,:)* 2.d0*PI
       sr%d_yieqe%loc_mat(:,:) = sr%d_yieqe%loc_mat(:,:) * 2.d0*PI
       sr%e_yiwe%loc_mat(:,:) = sr%e_yiwe%loc_mat(:,:) * 2.d0*PI
@@ -3329,7 +3329,7 @@ module vacuum_response
   !> Perform the time-evolution of the wall currents (resistive wall).
   subroutine evolve_wall_currents(my_id, psibnd_vec, dpsibnd_vec, dzjbnd_vec,  a_mat)
     
-    use phys_module, only: index_now, index_start, nstep, resistive_wall, time_evol_theta, time_evol_zeta, tstep
+    use phys_module, only: index_now, index_start, nstep, resistive_wall, time_evol_theta, time_evol_zeta, tstep, nstep_n
     use mpi_mod
     use nodes_elements
     use data_structure, only: type_SP_MATRIX
@@ -3345,8 +3345,8 @@ module vacuum_response
     type(type_SP_MATRIX):: a_mat
     
     ! --- Local variables
-    integer              :: k, k2
-    integer              :: ierr
+    integer              :: k, k2, i, j
+    integer              :: ierr, n_steps
     real *8, allocatable :: dwall_curr_2(:)
     real *8, allocatable :: dwall_curr_i2(:)   
     real *8, allocatable :: dwall_curr_e2(:)      
@@ -3388,6 +3388,65 @@ module vacuum_response
       call halo_time_stepping(my_id, node_list, element_list, bnd_elm_list, bnd_node_list, &
                               response_R_zj=response_R_zj, response_R_psis=response_R_psis, debug=.false., &
                               dzjbnd_vec=dzjbnd_vec, dpsibnd_vec=dpsibnd_vec) 
+      
+      ! Starts from 1
+      if (my_id .eq. 0) write(*,*) 'index_now=' , index_now
+
+      ! --- Fill input matrices at the corresponding column
+
+      ! Update the offline matrices
+      n_steps = sum(nstep_n)
+      if (.not. allocated (psibnd_mat)) then 
+          write(*,*) 'Allocating psibnd_mat with', n_dof_starwall , n_steps
+          allocate( psibnd_mat(n_dof_starwall , n_steps) )
+          psibnd_mat(:,:) = 0.d0
+      end if    
+      if (.not. allocated (Ielecw_mat)) then 
+          write(*,*) 'Allocating Ielecw_mat with', n_wall_curr_e , n_steps
+          allocate( Ielecw_mat(n_wall_curr_e , n_steps) )
+          Ielecw_mat(:,:) = 0.d0
+      end if  
+      if (.not. allocated (Ielecj_mat)) then 
+          write(*,*) 'Allocating IelecJ_mat with', n_shell_curr_e , n_steps
+          allocate( Ielecj_mat(n_shell_curr_e , n_steps) )
+          Ielecj_mat(:,:) = 0.d0
+      end if  
+      if (.not. allocated (wall_curr_i_mat)) then 
+          write(*,*) 'Allocating wall_curr_i_mat with', n_wall_curr_i , n_steps
+          allocate( wall_curr_i_mat(n_wall_curr_i , n_steps) )
+          wall_curr_i_mat(:,:) = 0.d0
+      end if   
+      
+      psibnd_mat(:,index_now) = psibnd_vec(:)
+      Ielecw_mat(:,index_now) = Ielec_w(:)
+      Ielecj_mat(:,index_now) = Ielec_J(:)
+
+      ! Print the offline matrices at the end of the sim
+      !if (index_now .eq. n_steps ) then 
+
+        if (my_id .eq. 0) then 
+
+          open(unit=10, file="psibnd_mat.txt", status="replace")
+          do i = 1, n_dof_starwall
+            write(10,'(*(ES24.16,1X))') (psibnd_mat(i,j), j = 1, n_steps)
+          end do
+          close(10)
+
+          open(unit=10, file="Ielecw_mat.txt", status="replace")
+          do i = 1, n_wall_curr_e
+            write(10,'(*(ES24.16,1X))') (Ielecw_mat(i,j), j = 1, n_steps)
+          end do
+          close(10)
+
+          open(unit=10, file="IelecJ_mat.txt", status="replace")
+          do i = 1, n_shell_curr_e
+            write(10,'(*(ES24.16,1X))') (IelecJ_mat(i,j), j = 1, n_steps)
+          end do
+          close(10)
+
+        endif
+      !endif
+
       
       ! ---- Debug deltas
       if (my_id .eq. 0) then 
@@ -3559,12 +3618,26 @@ module vacuum_response
       dwall_curr_i(:) = dwall_curr_i(:) + dwall_curr_i2(:)
       if (index_now <= 1 ) dwall_curr_i = 0.d0
       wall_curr_i(:) = wall_curr_i(:) + dwall_curr_i(:) 
+
+
       if (my_id == 0) then
         OPEN(UNIT=12, FILE="wall_curr_i_full.dat", ACTION="write", STATUS="replace")
         DO k=1,n_wall_curr_i
             WRITE(12,*) wall_curr_i(k)
         END DO
         CLOSE(12)  
+      endif
+
+      ! Save wall current in matrix
+
+      wall_curr_i_mat(:,index_now) = wall_curr_i(:)
+
+      if (my_id .eq. 0) then 
+        open(unit=10, file="wall_curr_i_mat.txt", status="replace")
+        do i = 1, n_wall_curr_i
+          write(10,'(*(ES24.16,1X))') (wall_curr_i_mat(i,j), j = 1, n_steps)
+        end do
+        close(10)
       endif
  
       ! ------------------------------------  CROSSING DOFS ------------------------------------------------

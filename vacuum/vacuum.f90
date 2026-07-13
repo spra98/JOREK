@@ -38,6 +38,9 @@ module vacuum
   real*8, allocatable :: dIelec_J(:)                     !< Delta Shell electrode current for halo coupling
   real*8, allocatable :: Ielec_w(:)                     !< Wall electrode current for halo coupling
   real*8, allocatable :: Ielec_J(:)                     !< Shell electrode current for halo coupling
+  ! Matrices for offline solution of the wall current
+  real*8, allocatable  :: psibnd_mat(:,:) , Ielecw_mat(:,:), IelecJ_mat(:,:), Ielecw_phys_mat(:,:), IelecJ_phys_mat(:,:), wall_curr_i_mat(:,:)
+
 
   !> Data type for response matrices distributed over the MPI tasks
   type :: t_distrib_mat
@@ -2529,11 +2532,11 @@ module vacuum
   end subroutine get_Ielec_halo
   
   subroutine halo_time_stepping(my_id, node_list, element_list, bnd_elm_list, bnd_node_list, response_R_zj, response_R_psis, debug, dzjbnd_vec, dpsibnd_vec)
-
+  
   use data_structure
   use gauss
   use mod_settings
-  use phys_module, only:  PI, n_period, F0, index_now, index_start
+  use phys_module, only:  PI, n_period, F0, index_now, index_start, nstep_n
   use basis_at_gaussian, only: H1, H1_s, HZ
   use constants, only: MU_ZERO
   use mod_basisfunctions
@@ -2550,7 +2553,7 @@ module vacuum
   real*8, OPTIONAL,             intent(in)    :: dpsibnd_vec(:)
 
   !> LOCAL VARIABLES
-  real*8              :: deltaJn(sr%nd_bez), deltaIelec_full(sr%n_electrode_w), Ielec_now_full(sr%n_electrode_w), Ielec_w_now(sr%n_electrode_w-1), Ielec_J_now(sr%n_electrode_J-1)
+  real*8              :: deltaJn(sr%nd_bez), deltaIelec_full(sr%n_electrode_w), Ielec_w_now_full(sr%n_electrode_w), Ielec_J_now_full(sr%n_electrode_J), Ielec_w_pre(sr%n_electrode_w-1), Ielec_J_pre(sr%n_electrode_J-1)
   integer             :: Npts_tot, npol,jj,mp, ms, i, j
   real*8, allocatable :: fact_R_zj(:), fact_R_psis(:), R_zj(:,:), R_psis(:,:), J_normal(:), jn_bez(:), test_sig(:), bez_sig(:), phi_t
   real*8, allocatable :: identity_mat(:,:), real2bez(:,:), fact_R_zj_point, fact_R_psis_point
@@ -2559,7 +2562,7 @@ module vacuum
   type(type_bnd_element) :: bndelem_s, bndelem_e
   type(type_element)     :: elem_s    
   type(type_node)        :: node_k, node_s
-  integer             :: s_bndelem, s_vertex, s_node, s_dof, s_dir, s_tor,k
+  integer             :: s_bndelem, s_vertex, s_node, s_dof, s_dir, s_tor,k, n_steps
   real*8   :: s_size, ss_size, j_size, fact_mu0, sign_out, e_size, psi_prec, zj_prec
   integer             :: index_start_realsp, index_end_realsp, real_entry_index, s_resp, s_harm
   integer             :: e_bndelem, e_vertex, e_node, e_node_bnd, s_node_bnd, e_dof, e_index, e_dir, e_tor, e_harm, e_resp
@@ -2737,20 +2740,57 @@ module vacuum
     Jn_bez(jj) = sum(real2bez(jj,:) * J_normal(:))
   enddo
   
-  Ielec_now_full(:) = 0.d0 
-  Ielec_w_now(:) = 0.d0 
-  Ielec_J_now(:) = 0.d0 
+  Ielec_w_now_full(:) = 0.d0 
+  Ielec_J_now_full(:) = 0.d0
+  Ielec_w_pre(:) = 0.d0 
+  Ielec_J_pre(:) = 0.d0 
 
   ! Compute I_elec from physics (at the previous time step!)
   do i =1,sr%n_electrode_w
-    Ielec_now_full(i) = -sum(sr%Jmat_w(i,:)*Jn_bez(:))
+    Ielec_w_now_full(i) = -sum(sr%Jmat_w(i,:)*Jn_bez(:))
   end do
-  Ielec_w_now(:) = Ielec_now_full(1:sr%n_electrode_w-1)
+  Ielec_w_pre(:) = Ielec_w_now_full(1:sr%n_electrode_w-1)
 
   do i =1,sr%n_electrode_J
-    Ielec_now_full(i) = sum(sr%Jmat_J(i,:)*Jn_bez(:))
+    Ielec_J_now_full(i) = sum(sr%Jmat_J(i,:)*Jn_bez(:))
   end do
-  Ielec_J_now(:) = Ielec_now_full(1:sr%n_electrode_J-1)
+  Ielec_J_pre(:) = Ielec_J_now_full(1:sr%n_electrode_J-1)
+
+  n_steps = sum(nstep_n)
+
+  if (.not. allocated (Ielecw_phys_mat)) then 
+      write(*,*) 'Allocating Ielecw_phys_mat with', sr%n_electrode_w-1 , n_steps
+      allocate( Ielecw_phys_mat(sr%n_electrode_w-1 , n_steps) )
+      Ielecw_phys_mat(:,:) = 0.d0
+  end if  
+
+  if (.not. allocated (Ielecj_phys_mat)) then 
+      write(*,*) 'Allocating Ielecj_phys_mat with', sr%n_electrode_j-1 , n_steps
+      allocate( Ielecj_phys_mat(sr%n_electrode_j-1 , n_steps) )
+      Ielecj_phys_mat(:,:) = 0.d0
+  end if  
+
+  if (index_now >= 2) then
+    ! I_elec_pre are calculated at the previous time step
+    Ielecw_phys_mat(:,index_now-1) = Ielec_w_pre(:) 
+    IelecJ_phys_mat(:,index_now-1) = Ielec_J_pre(:)
+  endif
+
+  if (my_id .eq. 0) then 
+
+    open(unit=10, file="Ielecw_phys_mat.txt", status="replace")
+    do i = 1, n_wall_curr_e
+      write(10,'(*(ES24.16,1X))') (Ielecw_phys_mat(i,j), j = 1, n_steps)
+    end do
+    close(10)
+
+    open(unit=10, file="IelecJ_phys_mat.txt", status="replace")
+    do i = 1, n_shell_curr_e
+      write(10,'(*(ES24.16,1X))') (IelecJ_phys_mat(i,j), j = 1, n_steps)
+    end do
+    close(10)
+
+  endif
 
   if (debug) then 
     if (my_id .eq. 0) write(*,*) 'HALO TIME STEPPING: Writing J_normal_halo_time_stepping.dat'
@@ -2777,8 +2817,8 @@ module vacuum
   if (present(dzjbnd_vec) .and. present(dpsibnd_vec)) then 
 
     if (index_now <= 1) then 
-      ! Ielec_w(:) = Ielec_w_now(:) 
-      ! Ielec_J(:) = Ielec_J_now(:)
+      ! Ielec_w(:) = Ielec_w_pre(:) 
+      ! Ielec_J(:) = Ielec_J_pre(:)
       dIelec_J = 0.d0 
       dIelec_w = 0.d0 
     else 
@@ -2816,12 +2856,12 @@ module vacuum
 
       OPEN(UNIT=12, FILE="I_elec_w_now_1.dat", ACTION="write", STATUS="replace")
       DO k=1,sr%n_electrode_w-1
-        WRITE(12,*) Ielec_w_now(k)
+        WRITE(12,*) Ielec_w_pre(k)
       END DO
 
       OPEN(UNIT=12, FILE="I_elec_J_now_1.dat", ACTION="write", STATUS="replace")
       DO k=1,sr%n_electrode_J-1
-        WRITE(12,*) Ielec_J_now(k)
+        WRITE(12,*) Ielec_J_pre(k)
       END DO
 
     endif 
@@ -2840,12 +2880,12 @@ module vacuum
 
       OPEN(UNIT=12, FILE="I_elec_w_now_2.dat", ACTION="write", STATUS="replace")
       DO k=1,sr%n_electrode_w-1
-        WRITE(12,*) Ielec_w_now(k)
+        WRITE(12,*) Ielec_w_pre(k)
       END DO
 
       OPEN(UNIT=12, FILE="I_elec_J_now_2.dat", ACTION="write", STATUS="replace")
       DO k=1,sr%n_electrode_J-1
-        WRITE(12,*) Ielec_J_now(k)
+        WRITE(12,*) Ielec_J_pre(k)
       END DO
 
     endif 
@@ -2853,15 +2893,21 @@ module vacuum
     if (index_now .eq. 4) then 
       OPEN(UNIT=12, FILE="I_elec_w_now_3.dat", ACTION="write", STATUS="replace")
       DO k=1,sr%n_electrode_w-1
-        WRITE(12,*) Ielec_w_now(k)
+        WRITE(12,*) Ielec_w_pre(k)
       END DO
 
       OPEN(UNIT=12, FILE="I_elec_J_now_3.dat", ACTION="write", STATUS="replace")
       DO k=1,sr%n_electrode_J-1
-        WRITE(12,*) Ielec_J_now(k)
+        WRITE(12,*) Ielec_J_pre(k)
       END DO
     endif
+
     ! ---- UPDATE THE PRESENT ELECTRODE CURRENTS
+    ! --- Initialization from the reference
+    if (index_now .eq. 1) then
+      Ielec_w(:) = Ielec_w_pre(:)
+      Ielec_J(:) = Ielec_J_pre(:)
+    endif
     ! WALL
     Ielec_w(:) = Ielec_w(:) + dIelec_w(:)
     ! SHELL
