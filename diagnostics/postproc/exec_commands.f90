@@ -2044,7 +2044,7 @@ module exec_commands
     ! --- Local variables
     integer :: i_file
     character(len=1024) :: filename, status, access
-    real*8 :: I_halo, TPF  
+    real*8 :: I_halo, I_net, TPF  
     
     ierr = 0
     
@@ -2067,12 +2067,12 @@ module exec_commands
         iostat=ierr)
     
     if ( first_step ) then
-      write(i_file,'(a)') '#               time            I_halo [MA]             TPF'
+      write(i_file,'(a)') '#                time          I_halo [MA]       I_net [MA]          TPF'
     end if
     
-    call integrated_normal_bnd_curr(node_list, bnd_node_list, bnd_elm_list, I_halo, TPF, .true.)
+    call integrated_normal_bnd_curr(node_list, bnd_node_list, bnd_elm_list, I_halo, I_net, TPF, .true.)
  
-    write(i_file,'(3es20.9)') time_now, I_halo, TPF 
+    write(i_file,'(4es20.9)') time_now, I_halo, I_net, TPF 
     
     close(i_file)
 

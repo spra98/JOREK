@@ -135,14 +135,14 @@ module mod_poloidal_currents
   !!
   !! See documentation in attached file in JIRA issue IMAS-2016
   !!-------------------------------------------------------------------
-  subroutine integrated_normal_bnd_curr(node_list, bnd_node_list, bnd_elm_list, I_halo, TPF, print_halo)
+  subroutine integrated_normal_bnd_curr(node_list, bnd_node_list, bnd_elm_list, I_halo, I_net, TPF, print_halo)
 
     implicit none
 
     type (type_node_list),        intent(in)    :: node_list
     type (type_bnd_element_list), intent(in)    :: bnd_elm_list   
     type (type_bnd_node_list),    intent(in)    :: bnd_node_list
-    real*8,                       intent(inout) :: I_halo, TPF      
+    real*8,                       intent(inout) :: I_halo, I_net, TPF      
     logical,                      intent(in)    :: print_halo      
 
     ! --- Local variables
@@ -153,7 +153,7 @@ module mod_poloidal_currents
     real*8                :: rho_s(n_gauss, n_plane), T0_s(n_gauss, n_plane) 
     real*8                :: P0_s(n_gauss, n_plane)
     real*8                :: I_halo_mp(n_plane), phi(n_plane)
-    real*8                :: k_size, I_net
+    real*8                :: k_size
     real*8                :: R(n_gauss), Z(n_gauss), R_s(n_gauss), Z_s(n_gauss)    
     type(type_node)       :: node_k
     type(type_bnd_element):: bndelem
@@ -223,7 +223,7 @@ module mod_poloidal_currents
       !--- integrate wished function over the element
       do ms = 1, n_gauss
         do mp = 1, n_plane
-          ! Jacobian cancels out with the one coming from derivatives of psi and P0
+          ! Jacobian sqrt(R_s**2+Z_s**2) cancels out with the one coming from derivatives of psi and P0
           I_halo = I_halo + wgauss(ms) * abs( ( zj(ms,mp) * psi_s(ms,mp) + R(ms)**2.d0 * P0_s(ms,mp) )/F0 )  
           I_net  = I_net  + wgauss(ms) *      ( zj(ms,mp) * psi_s(ms,mp) + R(ms)**2.d0 * P0_s(ms,mp) )/F0  
    
@@ -233,7 +233,8 @@ module mod_poloidal_currents
       enddo
   
     enddo !--- bnd elements
-
+    ! By dividing by 1/2 we account for just the current that gets out (or in), since we are counting it twice
+    ! Delta Phi = 2pi/n_plane
     I_halo       = 0.5*I_halo       / mu_zero * 1.d-6 * 2.d0 * PI / n_plane
     I_net        = 0.5*I_net        / mu_zero * 1.d-6 * 2.d0 * PI / n_plane
     I_halo_mp(:) = 0.5*I_halo_mp(:) / mu_zero * 1.d-6 * 2.d0 * PI 

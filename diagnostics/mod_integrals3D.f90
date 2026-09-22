@@ -105,7 +105,7 @@ real*8  :: R_c, Z_c, vec_inside(2), grad_t(2)
 real*8  :: k_size, k_size_perp
 real*8  :: G(4,n_degrees), sign_out, psi_n, ps0_sbnd, u0_sbnd
 real*8  :: dt_back, dt_now, r_dt, r_dt2
-real*8  :: I_halo, TPF, q02, q95, q99
+real*8  :: I_halo, I_net,TPF, q02, q95, q99
 real*8, allocatable :: qval(:), radav(:)
 
 real*8  :: R_axis,Z_axis,s_axis,t_axis
@@ -2488,9 +2488,10 @@ max_Ip_asymm = maxval(abs(current_tot_p(:) - offset_Ip))
 ! --- Halo currents
 #ifdef fullmhd   
   I_halo = 0.d0 ! Needs to be adapted for Full MHD
+  I_net  = 0.d0
   TPF    = 0.d0 
 #else
-  call integrated_normal_bnd_curr(node_list, bnd_node_list, bnd_elm_list, I_halo, TPF, .false.)
+  call integrated_normal_bnd_curr(node_list, bnd_node_list, bnd_elm_list, I_halo, I_net, TPF, .false.)
 #endif
 
 ! --- Safety factor at important locations
@@ -2775,6 +2776,9 @@ if (my_id .eq. 0) then
 
       case ( 'I_halo' )
         res(iexpr) = I_halo 
+
+      case ( 'I_net' )
+        res(iexpr) = I_net
 
       case ( 'TPF_halo' )
         res(iexpr) = TPF 
