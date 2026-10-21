@@ -680,8 +680,14 @@ write(*,*) "n elements:", element_list%n_elements
       write(*,*) '******************************************************'
     end if
     
-    if (freeboundary) call update_response(my_id,tstep, resistive_wall)
+    ! ### OLD
+    !if (freeboundary) call update_response(my_id,tstep, resistive_wall)
 
+    ! ### Updating also halo matrices here
+    if (freeboundary) call update_response(my_id,tstep, resistive_wall, &
+                      node_list, element_list, bnd_elm_list, bnd_node_list)
+    
+    
     ! ---- For now running the jorek2_main should not include aux inputs
     aux_node_list%n_nodes = 0
     do i = 1, size(aux_node_list%node, 1)

@@ -38,6 +38,8 @@ module vacuum
   real*8, allocatable :: dIelec_J(:)                     !< Delta Shell electrode current for halo coupling
   real*8, allocatable :: Ielec_w(:)                     !< Wall electrode current for halo coupling
   real*8, allocatable :: Ielec_J(:)                     !< Shell electrode current for halo coupling
+  real*8, allocatable :: Ielec_w_old(:)                 !< Wall electrode current for halo coupling, previous step
+  real*8, allocatable :: Ielec_J_old(:)                 !< Shell electrode current for halo coupling, previous step
   ! Matrices for offline solution of the wall current
   real*8, allocatable  :: psibnd_mat(:,:) , Ielecw_mat(:,:), IelecJ_mat(:,:), Ielecw_phys_mat_past(:,:), IelecJ_phys_mat_past(:,:),  Ielecw_phys_mat_past_full(:,:), IelecJ_phys_mat_past_full(:,:), wall_curr_i_mat(:,:), coil_curr_i_mat(:,:)
   real*8, allocatable  :: Ielecw_phys_mat_pres(:,:), IelecJ_phys_mat_pres(:,:),  Ielecw_phys_mat_pres_full(:,:), IelecJ_phys_mat_pres_full(:,:)
@@ -73,8 +75,6 @@ module vacuum
   real*8, allocatable  :: response_m_eq(:,:)             !< Response matrix for vacuum_equil
   ! Static pre-jacobian matrices in the halo time stepping
   real*8,allocatable :: response_m_jewj_i(:,:), response_m_wtotww_i(:,:), response_m_t_h(:,:)
-  real*8,allocatable :: response_curr_contrib_dpsi(:,:)
-
 
   !> @name Equilibrium coil contributions
   integer             :: n_coils                         !< number of poloidal field coils in coil_field.dat
@@ -643,6 +643,14 @@ module vacuum
           allocate( Ielec_w(n_wall_curr_e) )
           read(file_handle) Ielec_w(:)
 
+          if ( allocated(Ielec_J_old) ) deallocate(Ielec_J_old)
+          allocate( Ielec_J_old(n_shell_curr_e) )
+          read(file_handle) Ielec_J_old(:)
+
+          if ( allocated(Ielec_w_old) ) deallocate(Ielec_w_old)
+          allocate( Ielec_w_old(n_wall_curr_e) )
+          read(file_handle) Ielec_w_old(:)
+
           if ( allocated(dIelec_J) ) deallocate(dIelec_J)
           allocate( dIelec_J(n_shell_curr_e) )
           read(file_handle) dIelec_J(:)
@@ -795,6 +803,14 @@ module vacuum
            if ( allocated(Ielec_w) ) deallocate(Ielec_w)
            allocate( Ielec_w(n_wall_curr_e) )
            call HDF5_array1D_reading(file_id,Ielec_w,"Ielec_w")
+
+           if ( allocated(Ielec_J_old) ) deallocate(Ielec_J_old)
+           allocate( Ielec_J_old(n_shell_curr_e) )
+           call HDF5_array1D_reading(file_id,Ielec_J_old,"Ielec_J_old")
+
+           if ( allocated(Ielec_w_old) ) deallocate(Ielec_w_old)
+           allocate( Ielec_w_old(n_wall_curr_e) )
+           call HDF5_array1D_reading(file_id,Ielec_w_old,"Ielec_w_old")
 
            if ( allocated(dIelec_J) ) deallocate(dIelec_J)
            allocate( dIelec_J(n_shell_curr_e) )
@@ -978,7 +994,8 @@ module vacuum
           (.not. allocated(wall_curr_e)) .or. (.not. allocated(dwall_curr_e))      .or.  &
           (.not. allocated(old_dpsibnd_vec)) .or. (.not. allocated(old_dIelec_J)) .or. &
           (.not. allocated(old_dIelec_w)) .or. (.not. allocated(Ielec_J)) .or. &
-          (.not. allocated(Ielec_w)) .or. (.not. allocated(dIelec_J)) .or. (.not. allocated(dIelec_w)) ) then
+          (.not. allocated(Ielec_w)) .or. (.not. allocated(Ielec_J_old))  .or. (.not. allocated(Ielec_w_old)) .or. & 
+          (.not. allocated(dIelec_J)) .or. (.not. allocated(dIelec_w)) ) then
             write(*,*) 'ERROR in mod_vacuum.f90:export_restart_vacuum: Arrays not allocated.'
             stop
           end if
@@ -995,6 +1012,8 @@ module vacuum
 
           write(file_handle) Ielec_J(:)
           write(file_handle) Ielec_w(:)
+          write(file_handle) Ielec_J_old(:)
+          write(file_handle) Ielec_w_old(:)
           write(file_handle) dIelec_J(:)
           write(file_handle) dIelec_w(:)
 
@@ -1082,6 +1101,7 @@ module vacuum
                 (.not. allocated(wall_curr_e)) .or. (.not. allocated(dwall_curr_e)) .or. &
            (.not. allocated(old_dpsibnd_vec)) .or. (.not. allocated(old_dIelec_w)) &
            .or. (.not. allocated(old_dIelec_J)) .or. (.not. allocated(Ielec_J)) .or. &
+           (.not. allocated(Ielec_J_old)) .or. (.not. allocated(Ielec_w_old)) .or. &
           (.not. allocated(Ielec_w)) .or. (.not. allocated(dIelec_J)) .or. (.not. allocated(dIelec_w))) then
           write(*,*) 'ERROR in mod_vacuum.f90:export_restart_vacuum: Arrays not allocated.'
           stop
@@ -1111,6 +1131,8 @@ module vacuum
           call HDF5_array1D_saving(file_id,dwall_curr_e,n_wall_curr_e,"dwall_curr_e"//char(0))
           call HDF5_array1D_saving(file_id,Ielec_J,n_shell_curr_e,"Ielec_J"//char(0))
           call HDF5_array1D_saving(file_id,Ielec_w,n_wall_curr_e,"Ielec_w"//char(0))
+          call HDF5_array1D_saving(file_id,Ielec_J_old,n_shell_curr_e,"Ielec_J_old"//char(0))
+          call HDF5_array1D_saving(file_id,Ielec_w_old,n_wall_curr_e,"Ielec_w_old"//char(0))
           call HDF5_array1D_saving(file_id,dIelec_J,n_shell_curr_e,"dIelec_J"//char(0))
           call HDF5_array1D_saving(file_id,dIelec_w,n_wall_curr_e,"dIelec_w"//char(0))
         else
@@ -1304,6 +1326,12 @@ module vacuum
           if (allocated(Ielec_w)) deallocate(Ielec_w)
           allocate(Ielec_w(n_wall_curr_e))
 
+          if (allocated(Ielec_J_old)) deallocate(Ielec_J_old)
+          allocate(Ielec_J_old(n_shell_curr_e))
+
+          if (allocated(Ielec_w_old)) deallocate(Ielec_w_old)
+          allocate(Ielec_w_old(n_wall_curr_e))
+
           if (allocated(dIelec_J)) deallocate(dIelec_J)
           allocate(dIelec_J(n_shell_curr_e))
 
@@ -1414,6 +1442,8 @@ module vacuum
         call MPI_BCAST(dwall_curr_e,n_wall_curr_e,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
         call MPI_BCAST(Ielec_J,n_shell_curr_e,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
         call MPI_BCAST(Ielec_w,n_wall_curr_e,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
+        call MPI_BCAST(Ielec_J_old,n_shell_curr_e,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
+        call MPI_BCAST(Ielec_w_old,n_wall_curr_e,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
         call MPI_BCAST(dIelec_J,n_shell_curr_e,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
         call MPI_BCAST(dIelec_w,n_wall_curr_e,MPI_DOUBLE_PRECISION,0,MPI_COMM_WORLD,ierr)
 
@@ -2761,6 +2791,7 @@ module vacuum
           node_l      = node_list%node(l_node)
           l_dir       = bndelem_l%direction(l_vertex,l_dof)
           l_size      = bndelem_l%size(l_vertex,l_dof)
+
           R  (:)   = R  (:)  + node_l%x(1,l_dir,1) * l_size * H1  (l_vertex,l_dof,:)
           Z  (:)   = Z  (:)  + node_l%x(1,l_dir,2) * l_size * H1  (l_vertex,l_dof,:)
           R_s(:)   = R_s(:)  + node_l%x(1,l_dir,1) * l_size * H1_s(l_vertex,l_dof,:)
@@ -3008,14 +3039,14 @@ module vacuum
         deltaJn(i) = sum(response_R_zj(i,:) * dzjbnd_vec(:)) + sum(response_R_psis(i,:) * dpsibnd_vec(:))
       enddo
       deltaIelec_full(:) = 0.d0
-      ! Get delta I_elec at step (n-1) by using conversion matrix from CARIDDI
+      ! Get delta I_elec wall at step (n-1) by using conversion matrix from CARIDDI
       do i =1,sr%n_electrode_w
       deltaIelec_full(i) = -sum(sr%Jmat_w(i,:)*deltaJn(:))
       end do
       dIelec_w(:) = deltaIelec_full(1:sr%n_electrode_w-1)
 
       deltaIelec_full(:) = 0.d0
-      ! Get delta I_elec at step (n-1) by using conversion matrix
+      ! Get delta I_elec shell at step (n-1) by using conversion matrix
       do i =1,sr%n_electrode_J
       deltaIelec_full(i) = sum(sr%Jmat_J(i,:)*deltaJn(:))
       end do
@@ -3088,6 +3119,9 @@ module vacuum
         Ielec_w(:) = Ielec_w_now(:)
         Ielec_J(:) = Ielec_J_now(:)
       endif
+
+      Ielec_w_old(:) = Ielec_w(:) 
+      Ielec_J_old(:) = Ielec_J(:)
       ! WALL
       Ielec_w(:) = Ielec_w(:) + dIelec_w(:)
       ! SHELL
@@ -3340,7 +3374,7 @@ module vacuum
           fourier(:,:)   = fourier(:,:) + 2*cos(phi * mode_n(itor) )/ntor_f * f(i_start:i_end,:)
        else
           ! minus from the JOREK convention, phi has to be given in realspace convention
-          fourier(:,:)   = fourier(:,:) - 2*sin(phi * mode_n(itor) )/ntor_f * f(i_start:i_end,:)
+          fourier(:,:)   = fourier(:,:) + 2*sin(phi * mode_n(itor) )/ntor_f * f(i_start:i_end,:)
       end if
    end do
 
