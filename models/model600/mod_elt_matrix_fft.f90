@@ -30,6 +30,7 @@ use mod_impurity, only: radiation_function, radiation_function_linear
 use mod_sources
 use mod_model_settings
 use mod_plasma_functions
+use mod_jphi_gaussian_source, only: jphi_gaussian_rotated_source, Ip_gaussian_asymm
 
 implicit none
 
@@ -51,7 +52,9 @@ integer    :: i, j, ms, mt, mp, k, l, index_ij, index_kl, index, index_k, index_
 integer    :: n_tor_start, n_tor_end, n_tor_local, n_tor_loop
 integer    :: in, im, ij1, ij2, ij3, ij4, ij5, ij6, ij7, ij8, kl1, kl2, kl3, kl4, kl5, kl6, kl7, kl8, ij, kl
 real*8     :: wst, xjac, xjac_s, xjac_t, xjac_x, xjac_y, BigR, r2, phi, delta_phi
-real*8     :: current_source(n_gauss,n_gauss),particle_source(n_gauss,n_gauss),heat_source(n_gauss,n_gauss),heat_source_i(n_gauss,n_gauss),heat_source_e(n_gauss,n_gauss)
+real*8     :: current_source(n_plane,n_gauss,n_gauss),particle_source(n_gauss,n_gauss),heat_source(n_gauss,n_gauss),heat_source_i(n_gauss,n_gauss),heat_source_e(n_gauss,n_gauss)
+real*8     :: zj_gauss_tilt
+real*8     :: jgs_J_R, jgs_J_Z, jgs_J_phi, jgs_dJ_R_dt, jgs_dJ_Z_dt, jgs_dJ_phi_dt
 real*8     :: R_axis, Z_axis, psi_axis, psi_bnd, R_xpoint(2), Z_xpoint(2), dj_dpsi, dj_dz, source_pellet, source_volume
 real*8     :: Bgrad_rho_star,  Bgrad_rho,  Bgrad_vpar,  Bgrad_T_star,  Bgrad_Ti, Bgrad_Te, Bgrad_T, BB2
 real*8     :: Bgrad_rho_star_psi, Bgrad_rho_psi, Bgrad_rho_rho, Bgrad_vpar_vpar, Bgrad_vpar_psi,  Bgrad_T_star_psi, Bgrad_Ti_psi, Bgrad_T_psi, Bgrad_Ti_Ti, Bgrad_Te_psi, Bgrad_T_T, Bgrad_Te_Te, BB2_psi
@@ -59,6 +62,9 @@ real*8     :: Bgrad_rho_k_star, Bgrad_T_k_star, Bgrad_Ti_Ti_n, Bgrad_Te_Te_n, Bg
 real*8     :: Bgrad_rhoimp, Bgrad_rhoimp_psi, Bgrad_rhoimp_rhoimp, Bgrad_rhoimp_rhoimp_n
 real*8     :: ZK_par_T, dZK_par_dT, ZKi_par_T, dZKi_par_dT, ZKe_par_T, dZKe_par_dT
 real*8     :: D_prof, ZK_prof, ZKi_prof, ZKe_prof, psi_norm, theta, zeta, delta_u_x, delta_u_y, delta_ps_x, delta_ps_y
+! --- Parameters to opionally freeze variables
+real*8     :: freeze_var(0:n_var)
+
 real*8     :: D_prof_imp
 real*8     :: rhs_ij(n_var), rhs_ij_k(n_var)
 real*8     :: amat(n_var,n_var), amat_k(n_var,n_var), amat_n(n_var,n_var), amat_kn(n_var,n_var), amat_nn(n_var,n_var)
@@ -237,6 +243,21 @@ else
   max_terms_loop = 1
 endif
 
+! --- Check if any variables are chosen to be frozen
+freeze_var = 1.d0
+if (freeze_variable%var_psi   )  freeze_var(var_psi   ) = freeze_variable%zbig
+if (freeze_variable%var_u     )  freeze_var(var_u     ) = freeze_variable%zbig
+if (freeze_variable%var_zj    )  freeze_var(var_zj    ) = freeze_variable%zbig
+if (freeze_variable%var_w     )  freeze_var(var_w     ) = freeze_variable%zbig
+if (freeze_variable%var_T     )  freeze_var(var_T     ) = freeze_variable%zbig
+if (freeze_variable%var_Ti    )  freeze_var(var_Ti    ) = freeze_variable%zbig
+if (freeze_variable%var_Te    )  freeze_var(var_Te    ) = freeze_variable%zbig
+if (freeze_variable%var_vpar  )  freeze_var(var_vpar  ) = freeze_variable%zbig
+if (freeze_variable%var_rho   )  freeze_var(var_rho   ) = freeze_variable%zbig
+if (freeze_variable%var_rhon  )  freeze_var(var_rhon  ) = freeze_variable%zbig
+if (freeze_variable%var_rhoimp)  freeze_var(var_rhoimp) = freeze_variable%zbig
+
+
 ELM_p = 0.d0
 ELM_n = 0.d0
 ELM_k = 0.d0
@@ -304,6 +325,7 @@ eq_g = 0.d0; eq_s = 0.d0; eq_t = 0.d0; eq_st = 0.d0; eq_ss = 0.d0; eq_tt = 0.d0;
 delta_g = 0.d0; delta_s = 0.d0; delta_t = 0.d0
 
 current_source  = 0.d0
+zj_gauss_tilt   = 0.d0
 particle_source = 0.d0
 heat_source_i   = 0.d0
 heat_source_e   = 0.d0
@@ -402,9 +424,27 @@ h_e = dmin1(len1, len2)
 do ms=1, n_gauss
   do mt=1, n_gauss
 
-    if (keep_current_prof) &
-      call current(xpoint2, xcase2, x_g(ms,mt),y_g(ms,mt), Z_xpoint, eq_g(1,var_psi,ms,mt),psi_axis,psi_bnd,current_source(ms,mt))
-  
+    if (keep_current_prof) then
+      call current(xpoint2, xcase2, x_g(ms,mt),y_g(ms,mt), Z_xpoint, eq_g(1,var_psi,ms,mt),psi_axis,psi_bnd,current_source(1,ms,mt))
+      current_source(:,ms,mt) = current_source(1,ms,mt)
+    endif
+
+    ! --- Tilted gaussian external current source (J_phi*mu0 units); see mod_jphi_gaussian_source.f90
+    ! Computed once per Gauss point here (like the equilibrium current above), not inside the
+    ! per-basis-function (i,j) assembly loop below, to avoid accumulating it multiple times.
+    if (jgs_amplitude .ne. 0.d0) then
+      do mp = 1, n_plane
+        phi = 2.d0*PI*float(mp-1)/float(n_plane) / float(n_period)
+        call jphi_gaussian_rotated_source(x_g(ms,mt), y_g(ms,mt), phi, jgs_J_R, jgs_J_Z, jgs_J_phi, &
+                                           jgs_dJ_R_dt, jgs_dJ_Z_dt, jgs_dJ_phi_dt)
+        current_source(mp,ms,mt) = current_source(mp,ms,mt) - x_g(ms,mt) * jgs_J_phi  ! needs to be converted to zj = -mu0 * R *Jphi  
+        ! Save normalized current zj = - R mu_0 Jphi for successive integration
+        zj_gauss_tilt = - x_g(ms,mt) * jgs_J_phi
+        ! Update the value of the integral on the corresponding plane
+        call Ip_gaussian_asymm(zj_gauss_tilt, mp, ms, mt, x_g(ms,mt), x_s(ms,mt), x_t(ms,mt), y_s(ms,mt), y_t(ms,mt))
+      enddo
+    endif
+
     if ( with_TiTe ) then
       call sources(xpoint2, xcase2, y_g(ms,mt), Z_xpoint, eq_g(1,var_psi,ms,mt),psi_axis,psi_bnd, &
                    particle_source(ms,mt),heat_source_i(ms,mt),heat_source_e(ms,mt))
@@ -1315,7 +1355,7 @@ do i=1,n_vertex_max
             !#  Induction Equation                                                                             #
             !###################################################################################################
 
-            rhs_ij(var_psi) = v * eta_T  * (zj0 - current_source(ms,mt) - Jb)/ BigR           * xjac * tstep * factor(var_psi,1) &
+            rhs_ij(var_psi)  = v * eta_T  * (zj0 - current_source(mp,ms,mt) - Jb)/ BigR           * xjac * tstep * factor(var_psi,1)  &
                       + v * (ps0_s * u0_t - ps0_t * u0_s)                                            * tstep * factor(var_psi,2) &
                       - v * F0 / BigR  * u0_p                                                 * xjac * tstep * factor(var_psi,2) &
                       + eta_num_T * (v_x * zj0_x + v_y * zj0_y)                               * xjac * tstep * factor(var_psi,3) &
@@ -2094,7 +2134,7 @@ do i=1,n_vertex_max
                   !#  Induction Equation                                                                             #
                   !###################################################################################################
 
-                  amat(var_psi,var_psi) = v * psi / BigR * xjac * (1.d0 + zeta)                                                     &
+                  amat(var_psi,var_psi) = v * psi / BigR * xjac * (1.d0 + zeta) * freeze_var(var_psi)                                                    &
                             - v * (psi_s * u0_t - psi_t * u0_s)                                                     * theta * tstep &
                                                                                                                    
                      + v * tauIC*2./(r0_corr*BB2) * F0**2/BigR**2 * (psi_s * Pe0_t - psi_t * Pe0_s)                 * theta * tstep &
@@ -2115,12 +2155,12 @@ do i=1,n_vertex_max
                               - v * tauIC*2. * rho /(r0_corr**2 * BB2) * F0**2/BigR**2 * (ps0_s * Pe0_t - ps0_t * Pe0_s) * theta * tstep &
                               + v * tauIC*2. * rho /(r0_corr**2 * BB2) * F0**3/BigR**3 * Pe0_p                    * xjac * theta * tstep &
                               ! The density gradient term from Z_eff
-                              - deta_dr0 * v * rho * (zj0-current_source(ms,mt)-Jb) / BigR                        * xjac * theta * tstep
+                              - deta_dr0 * v * rho * (zj0-current_source(mp,ms,mt)-Jb) / BigR            * xjac * theta * tstep 
 
                   amat_n(var_psi,var_rho) = - v * tauIC*2./(r0_corr*BB2) * F0**3/BigR**3 * Te0  * rho_p           * xjac * theta * tstep 
 
                   if ( with_TiTe ) then ! (with_TiTe) **********************************************
-                    amat(var_psi,var_Te) = - deta_dT * v * Te * (zj0 - current_source(ms,mt) - Jb)/ BigR * xjac  * theta * tstep &
+                    amat(var_psi,var_Te) = - deta_dT * v * Te * (zj0 - current_source(mp,ms,mt) - Jb)/ BigR * xjac  * theta * tstep &
                                    - deta_num_dT * Te * (v_x * zj0_x + v_y * zj0_y)              * xjac          * theta * tstep &
                               + v * tauIC*2./(r0_corr*BB2) * F0**2/BigR**2 * r0 * (ps0_s * Te_t  - ps0_t * Te_s) * theta * tstep &
                               + v * tauIC*2./(r0_corr*BB2) * F0**2/BigR**2 * Te * (ps0_s * r0_t - ps0_t * r0_s)  * theta * tstep &
@@ -2128,7 +2168,7 @@ do i=1,n_vertex_max
 
                     amat_n(var_psi,var_Te) = - v * tauIC*2./(r0_corr*BB2) * F0**3/BigR**3 * r0 * Te_p     * xjac * theta * tstep
                   else ! (with_TiTe = .f.), i.e. with single temperature *********************************
-                    amat(var_psi,var_T) = - deta_dT * v * T * (zj0 - current_source(ms,mt) - Jb)/ BigR    * xjac * theta * tstep &
+                    amat(var_psi,var_T) = - deta_dT * v * T * (zj0 - current_source(mp,ms,mt) - Jb)/ BigR    * xjac * theta * tstep &
                                    - deta_num_dT * T * (v_x * zj0_x + v_y * zj0_y)                        * xjac * theta * tstep &
                               + v * tauIC/(r0_corr*BB2) * F0**2/BigR**2 * r0 * (ps0_s * T_t  - ps0_t * T_s)   * theta * tstep &
                               + v * tauIC/(r0_corr*BB2) * F0**2/BigR**2 * T  * (ps0_s * r0_t - ps0_t * r0_s)  * theta * tstep &
@@ -2138,7 +2178,7 @@ do i=1,n_vertex_max
                   end if ! (with_TiTe) *************************************************************
 
                   if (with_impurities) then
-                    amat(var_psi,var_rhoimp) = - deta_drimp0 * v * rhoimp * (zj0-current_source(ms,mt)-Jb) / BigR * xjac * theta * tstep
+                    amat(var_psi,var_rhoimp) = - deta_drimp0 * v * rhoimp * (zj0-current_source(mp,ms,mt)-Jb) / BigR * xjac * theta * tstep
                   endif
 
                   !###################################################################################################
@@ -2173,7 +2213,7 @@ do i=1,n_vertex_max
                                                * BigR * xjac * tstep * theta
                   endif
 
-                  amat(var_u,var_u) = - BigR**3 * r0_corr * (v_x * u_x + v_y * u_y) * xjac * (1.d0 + zeta)                                &
+                  amat(var_u,var_u) = - BigR**3 * r0_corr * (v_x * u_x + v_y * u_y) * xjac * (1.d0 + zeta) * freeze_var(var_u)                               &
                                     + r0_hat * BigR**2 * w0 * (v_s * u_t  - v_t  * u_s)                                   * theta * tstep &
                                     + BigR**2 * (u_x * u0_x + u_y * u0_y) * (v_x * r0_y_hat - v_y * r0_x_hat)      * xjac * theta * tstep &
 
@@ -2420,14 +2460,14 @@ do i=1,n_vertex_max
                   !#  Current Definition Equation                                                                    #
                   !###################################################################################################
 
-                  amat(var_zj,var_zj) = v * zj / BigR * xjac
+                  amat(var_zj,var_zj) = v * zj / BigR * xjac * freeze_var(var_zj)
                   amat(var_zj,var_psi) = (v_x * psi_x + v_y * psi_y ) / BigR * xjac
 
                   !###################################################################################################
                   !#  Vorticity Definition Equation                                                                  #
                   !###################################################################################################
 
-                  amat(var_w,var_w) =  v * w * BigR * xjac                                
+                  amat(var_w,var_w) =  v * w * BigR * xjac     * freeze_var(var_w)                           
                   amat(var_w,var_u) = (v_x * u_x + v_y * u_y) * BigR * xjac              
 
                   !###################################################################################################
@@ -2468,7 +2508,7 @@ do i=1,n_vertex_max
                                        + tgnum_rho * 0.25d0 * BigR**3 * (r0_x * u0_y - r0_y * u0_x)                                                    &
                                                                     * ( v_x * u_y  - v_y  * u_x)                 * xjac * theta * tstep * tstep 
 
-                  amat(var_rho,var_rho) = v * rho * BigR * (1.d0 + zeta)                                            * xjac   &
+                  amat(var_rho,var_rho) = v * rho * BigR * (1.d0 + zeta) * freeze_var(var_rho)                                           * xjac   &
                           - v * BigR**2 * ( rho_s * u0_t - rho_t * u0_s)                                       * theta * tstep &
                           - v * 2.d0 * BigR * rho * u0_y                                                * xjac * theta * tstep &
                           + ((D_par+D_par_sc_num*tau_sc)-D_prof) * BigR / BB2 * Bgrad_rho_star * Bgrad_rho_rho                * xjac * theta * tstep &
@@ -2774,7 +2814,7 @@ do i=1,n_vertex_max
                     end if ! (with_TiTe) ***********************************************************
 
  
-                    amat(var_vpar,var_vpar) = v * Vpar * r0_corr * F0**2 / BigR * xjac * (1.d0 + zeta) &
+                    amat(var_vpar,var_vpar) = v * Vpar * r0_corr * F0**2 / BigR * xjac * (1.d0 + zeta) * freeze_var(var_vpar) &
   
                        ! New terms coming from -(\partial_t \rho + \nabla \cdot (\rho \mathbf{v})) \mathbf{v} in RHS of momentum equation
                        ! (see wiki: https://www.jorek.eu/wiki/doku.php?id=model500_501_555#equations):
@@ -3062,7 +3102,7 @@ do i=1,n_vertex_max
                                      * (      + F0 / BigR * v_p) * xjac * theta * tstep * tstep
   
   
-                    amat(var_Ti,var_Ti) = v * (r0_corr + rimp0_corr*alpha_i) * Ti  * BigR * xjac * (1.d0 + zeta)&
+                    amat(var_Ti,var_Ti) = v * (r0_corr + rimp0_corr*alpha_i) * Ti  * BigR * xjac * (1.d0 + zeta) * freeze_var(var_Ti)&
                               - v * (r0 + rimp0*alpha_i) * BigR**2  * (Ti_s  * u0_t - Ti_t  * u0_s) * theta * tstep &
                               - v * Ti  * BigR**2 * (r0_s * u0_t - r0_t * u0_s)                     * theta * tstep &
                               - v * alpha_i * Ti * BigR**2 * (rimp0_s * u0_t - rimp0_t * u0_s)      * theta * tstep &
@@ -3418,7 +3458,7 @@ do i=1,n_vertex_max
                     amat(var_Te,var_Ti) = - v * BigR * ddTe_i_dTi * Ti                            * xjac * theta * tstep
   
   
-                    amat(var_Te,var_Te) = v * (r0_corr + rimp0_corr * alpha_e_bis) * Te  * BigR * xjac * (1.d0 + zeta)     &
+                    amat(var_Te,var_Te) = v * (r0_corr + rimp0_corr * alpha_e_bis) * Te  * BigR * xjac * (1.d0 + zeta)  * freeze_var(var_Te)   &
                     !=============== The ionization potential energy term=========================
                               + (GAMMA-1.) * v * rimp0 * dE_ion_dT  * Te * BigR * xjac * (1.d0 + zeta)                &
                               - (GAMMA-1.) * v * rimp0 * dE_ion_dT * BigR**2 * (Te_s*u0_t - Te_t*u0_s)  * theta * tstep &
@@ -3853,7 +3893,7 @@ do i=1,n_vertex_max
                                     * T0 * (+ F0 / BigR * rho_p)                                                      &
                                     * (     + F0 / BigR * v_p)                         * xjac * theta * tstep * tstep
   
-                    amat(var_T,var_T) = v * (r0_corr + rimp0_corr * alpha_imp_bis) * T  * BigR * xjac * (1.d0 + zeta)  &
+                    amat(var_T,var_T) = v * (r0_corr + rimp0_corr * alpha_imp_bis) * T  * BigR * xjac * (1.d0 + zeta) * freeze_var(var_T) &
                          -implicit_heat_source*(gamma-1.d0)*v                                                          &
                          *(exp( (min(T0,T_min_neg)-T_min_neg)/(0.5d0*T_min_neg) ) -1.d0)*T* xjac*theta*tstep*BigR      &
                     !=============== The ionization potential energy term=========================
@@ -4168,7 +4208,7 @@ do i=1,n_vertex_max
 
                     endif ! with_vpar
 
-                    amat(var_rhon,var_rhon) = + v * rhon * BigR * xjac * (1.d0 + zeta)   &
+                    amat(var_rhon,var_rhon) = + v * rhon * BigR * xjac * (1.d0 + zeta) * freeze_var(var_rhon)  &
 
                               + delta_n_convection*(                                                                                     &
                                 - v * BigR**2 * ( rhon_s * u0_t - rhon_t * u0_s)                       * theta * tstep &
@@ -4258,7 +4298,7 @@ do i=1,n_vertex_max
 
                      amat_n(var_rhoimp,var_vpar) = + v * rimp0 * F0 / BigR * vpar_p                   * xjac * theta * tstep 
                    end if
-                     amat(var_rhoimp,var_rhoimp)  = + v * rhoimp * BigR * xjac * (1.d0 + zeta)                                                          &
+                     amat(var_rhoimp,var_rhoimp)  = + v * rhoimp * BigR * xjac * (1.d0 + zeta) * freeze_var(var_rhoimp)                                                          &
                           - v * BigR**2 * ( rhoimp_s * u0_t - rhoimp_t * u0_s)                                  * theta * tstep &
                           - v * 2.d0 * BigR * rhoimp * u0_y                                            * xjac * theta * tstep &
                           + v * Vpar0 * (rhoimp_s * ps0_t - rhoimp_t * ps0_s)                                   * theta * tstep &

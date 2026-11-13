@@ -274,6 +274,19 @@ subroutine preset_parameters
   rho_min_neg        = -1.d12
   
   implicit_heat_source = 0.d0
+
+  freeze_variable%var_psi    = .false.
+  freeze_variable%var_u      = .false.
+  freeze_variable%var_zj     = .false.
+  freeze_variable%var_w      = .false.
+  freeze_variable%var_T      = .false.
+  freeze_variable%var_Ti     = .false.
+  freeze_variable%var_Te     = .false.
+  freeze_variable%var_vpar   = .false.
+  freeze_variable%var_rho    = .false.
+  freeze_variable%var_rhon   = .false.
+  freeze_variable%var_rhoimp = .false.
+  freeze_variable%zbig       = 1.d12
   
   corr_neg_temp_coef(:) = (/ 0.5, 0.5 /)
   corr_neg_dens_coef(:) = (/ 0.5, 0.5 /)
@@ -815,7 +828,12 @@ subroutine preset_parameters
   jw1=5.d-1 ! inner cut-off
   jw2=1.d0  ! outer cut-off
   jw3=1.d0  ! outer cut-off
-  
+  jgs_amplitude  = 0.d0 ! source inactive by default
+  jgs_R0         = 1.d0
+  jgs_Z0         = 0.d0
+  jgs_width      = 0.1d0
+  jgs_tilt_angle = 0.d0
+  jgs_ramp_time  = 0.d0
   !> @name Mode families preconditioner parameters
   n_mode_families      = (n_tor + 1)/2
   autodistribute_modes = .true.
