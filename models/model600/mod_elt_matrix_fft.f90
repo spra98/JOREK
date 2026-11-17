@@ -438,10 +438,6 @@ do ms=1, n_gauss
         call jphi_gaussian_rotated_source(x_g(ms,mt), y_g(ms,mt), phi, jgs_J_R, jgs_J_Z, jgs_J_phi, &
                                            jgs_dJ_R_dt, jgs_dJ_Z_dt, jgs_dJ_phi_dt)
         current_source(mp,ms,mt) = current_source(mp,ms,mt) - x_g(ms,mt) * jgs_J_phi  ! needs to be converted to zj = -mu0 * R *Jphi  
-        ! Save normalized current zj = - R mu_0 Jphi for successive integration
-        zj_gauss_tilt = - x_g(ms,mt) * jgs_J_phi
-        ! Update the value of the integral on the corresponding plane
-        call Ip_gaussian_asymm(zj_gauss_tilt, mp, ms, mt, x_g(ms,mt), x_s(ms,mt), x_t(ms,mt), y_s(ms,mt), y_t(ms,mt))
       enddo
     endif
 
