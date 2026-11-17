@@ -2519,7 +2519,7 @@ offset_Ip = sum(current_tot_p) / real(n_plane)
 max_Ip_asymm = maxval(abs(current_tot_p(:) - offset_Ip))
 
 offset_ref_gauss_Ip = sum(ref_gauss_current_tot_p) / real(n_plane)
-max_ref_gauss_Ip_asymm = maxval(abs (ref_gauss_current_tot_p(:) - offset_ref_gauss_Ip))
+max_ref_gauss_Ip_asymm = maxval(abs(ref_gauss_current_tot_p(:) - offset_ref_gauss_Ip))
 
 ! --- Externally calculated quantities
 ! --- Halo currents
