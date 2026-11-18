@@ -1,0 +1,42 @@
+Review of tilted Gaussian current source -- November 16, 2026
+
+Source review: models/mod_jphi_gaussian_source.f90,
+models/model600/mod_elt_matrix_fft.f90, matrix/construct_matrix_mod.f90,
+tools/mod_coordinate_transforms.f90, diagnostics/integral_current.f90.
+
+Conclusion
+
+The local integration correctly computes the signed toroidal current crossing each poloidal plane inside the computational mesh. The saved result is currently unreliable in parallel runs, however, because of unsynchronized OpenMP updates and incomplete MPI assembly.
+
+Rotation
+
+jphi_gaussian_rotated_source correctly implements a rigid rotation about the Cartesian y-axis through the origin: it rotates the query position backward, evaluates the original Gaussian there, rotates the current vector forward, and converts to cylindrical components at the actual query point. The time ramp rescales this prescribed field.
+
+Quadrature
+
+The caller sets zj_gauss_tilt = -R*jgs_J_phi. Ip_gaussian_asymm adds
+-zj_gauss_tilt/R * (R_s*Z_t - R_t*Z_s) * wgauss(ms)*wgauss(mt).
+Thus it approximates integral_D jgs_J_phi(R,Z,phi_mp) dR dZ.
+No extra R or 2*pi factor is needed for this per-plane current. This assumes positively oriented elements and sufficient mesh/quadrature resolution. Integration over mesh quadrature points restricts the result to the computational domain.
+
+OpenMP problem
+
+Ip_gaussian_p is shared by threads in the element assembly loop. The update in Ip_gaussian_asymm is an unprotected read-modify-write operation, so concurrent updates can be lost. An atomic update or thread-local accumulation followed by combination is needed.
+
+MPI problem
+
+Rank 0 writes its local Ip_gaussian_p without a global reduction. The local_elms list includes elements touching locally owned nodes; elements can occur on several ranks. Simply summing the arrays across ranks can therefore double-count elements. Each element must contribute on exactly one designated rank before reduction, or a separate diagnostic can integrate the complete mesh on one rank if available there.
+
+Units
+
+The caller comments describe jgs_J_phi as mu0*J_phi. Under that convention the diagnostic contains mu0*I_p, not amperes. Divide by mu0 = 4*pi*10^(-7) for amperes, consistent with diagnostics/integral_current.f90. If jgs_amplitude is instead supplied in A/m^2, this diagnostic integrates to amperes, but the equation source lacks the mu0 conversion expected by the stated convention. Clarify the intended input normalization.
+
+Meaning of retained current
+
+The diagnostic measures the signed toroidal component crossing a constant-phi surface, including the time ramp. It does not integrate the vector magnitude or directly measure a fraction of Gaussian material retained. It measures the prescribed source rather than the evolved plasma response.
+
+The original Gaussian is defined everywhere, without an original-domain mask. The implemented operation is 'rotate the full Gaussian, then integrate inside the mesh'. Contributions can originate from positions outside the original mesh. For 'restrict the original Gaussian to the mesh, then rotate that restricted distribution', add a domain-membership check on the backward-rotated position.
+
+Validation status
+
+These conclusions are based on source inspection. No simulation source was modified and no simulation or numerical convergence test was run.

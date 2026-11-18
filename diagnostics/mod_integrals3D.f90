@@ -1551,6 +1551,8 @@ aux_q0    = 0.d0; aux_jx0   = 0.d0; aux_jy0   = 0.d0; aux_jz0   = 0.d0; aux_jz0_
 
         endif !in or outside LCFS
 
+
+
         
         BB2_zero = (F0 **2 + (dpsidx - dpsidx_3d) **2 + (dpsidy - dpsidy_3d) **2) / BigR ** 2
         ! SAW energy functional (linear MHD), see the first term of eq. (8.31) in Freidberg's Ideal MHD
@@ -2519,7 +2521,7 @@ offset_Ip = sum(current_tot_p) / real(n_plane)
 max_Ip_asymm = maxval(abs(current_tot_p(:) - offset_Ip))
 
 offset_ref_gauss_Ip = sum(ref_gauss_current_tot_p) / real(n_plane)
-max_ref_gauss_Ip_asymm = maxval(abs (ref_gauss_current_tot_p(:) - offset_ref_gauss_Ip))
+max_ref_gauss_Ip_asymm = maxval(abs(ref_gauss_current_tot_p(:) - offset_ref_gauss_Ip))
 
 ! --- Externally calculated quantities
 ! --- Halo currents

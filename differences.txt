@@ -1,0 +1,2 @@
+Only in ./: differences.txt
+Files ./vacuum/vacuum.f90 and ../jorek/vacuum/vacuum.f90 differ
