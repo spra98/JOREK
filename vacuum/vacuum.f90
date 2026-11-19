@@ -2664,6 +2664,8 @@ module vacuum
   npol     = bnd_elm_list%n_bnd_elements * n_gauss
   if (my_id.eq. 0) write(*,*) 'get_delta_Ielec: NPOL =', npol
   if (.not. allocated(identity_mat)) allocate(identity_mat(Npts_tot, Npts_tot))
+  
+  fact_mu0 = 1.d0/mu_zero
 
   identity_mat = 0.d0
   do jj = 1 , Npts_tot
@@ -2691,7 +2693,6 @@ module vacuum
       J_normal_pres   = 0.d0
       jn_bez_past      = 0.d0
       jn_bez_pres      = 0.d0
-      fact_mu0 = 1.d0/mu_zero
       R_zj = 0.d0 
       R_psis = 0.d0
 
@@ -3196,8 +3197,10 @@ module vacuum
       endif
 
     else   ! Not using force balance, computing electrode current via assigned source
-
-
+      
+      if (index_now .eq. 1 .and. my_id .eq. 0) write(*,*) 'Calculating electrode currents from assigned source, index 1'
+      if (index_now .eq. 2 .and. my_id .eq. 0) write(*,*) 'Calculating electrode currents from assigned source, index 2'
+      
       if (.not. allocated(Jn_gauss_vec)) allocate(Jn_gauss_vec(Npts_tot))
       if (.not. allocated(dJn_dt_gauss_vec)) allocate(dJn_dt_gauss_vec(Npts_tot))
       if (.not. allocated(dJn_gauss_vec)) allocate(dJn_gauss_vec(Npts_tot))
@@ -3291,6 +3294,9 @@ module vacuum
         enddo ! end m_plane
       enddo ! end s_bndelem
 
+      if (index_now .eq. 1 .and. my_id .eq. 0) write(*,*) 'Maximum dJn_gauss_vec at time index 1 = ', maxval(abs(dJn_gauss_vec))
+      if (index_now .eq. 2 .and. my_id .eq. 0) write(*,*) 'Maximum Jn_gauss_vec at time index 2 = ', maxval(abs(Jn_gauss_vec))
+ 
       ! Convert Jn_gauss_vec to Bezier
       if (.not. ALLOCATED(Jnbez_gauss_vec)) ALLOCATE(Jnbez_gauss_vec(sr%nd_bez))
       Jnbez_gauss_vec(:) = 0.d0

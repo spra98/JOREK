@@ -3408,11 +3408,10 @@ module vacuum_response
       ! ================================ EDDY + HALO COUPLING =============================================
       ! ===================================================================================================
 
-
       ! Calculate deltaIel_w from deltazj and deltapsi and Iel_w at present
       if (.not. ALLOCATED(response_R_psis)) allocate(response_R_psis(sr%nd_bez, sr%nd_bez))
       if (.not. ALLOCATED(response_R_zj)) allocate(response_R_zj(sr%nd_bez, sr%nd_bez))
-      
+     
       ! --- EVOLVE ELECTRODE CURRENTS
       call halo_time_stepping(my_id, node_list, element_list, bnd_elm_list, bnd_node_list, &
                               response_R_zj=response_R_zj, response_R_psis=response_R_psis, debug=.false., &
@@ -3501,7 +3500,7 @@ module vacuum_response
           write(10,'(*(ES24.16,1X))') (ddIelecJ_gauss_mat(i,j), j = 1, n_steps)
         end do
         close(10)
-        
+
       endif
       
       ! ---- Debug deltas
