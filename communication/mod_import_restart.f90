@@ -385,6 +385,10 @@ subroutine import_binary_restart(node_list, element_list, filename, format_rst, 
     call tr_allocate(Ip_asymm_t,1,index_start+nstep,"Ip_asymm_t",CAT_UNKNOWN)
     Ip_asymm_t = 0.d0
 
+    if (allocated(oint_Ip_asymm_t)) call tr_deallocate(oint_Ip_asymm_t,"oint_Ip_asymm_t",CAT_UNKNOWN)
+    call tr_allocate(oint_Ip_asymm_t,1,index_start+nstep,"oint_Ip_asymm_t",CAT_UNKNOWN)
+    oint_Ip_asymm_t = 0.d0
+
     if (allocated(ref_gauss_Ip_asymm_t)) call tr_deallocate(ref_gauss_Ip_asymm_t,"ref_gauss_Ip_asymm_t",CAT_UNKNOWN)
     call tr_allocate(ref_gauss_Ip_asymm_t,1,index_start+nstep,"ref_gauss_Ip_asymm_t",CAT_UNKNOWN)
     ref_gauss_Ip_asymm_t = 0.d0
@@ -1586,6 +1590,11 @@ subroutine import_hdf5_restart(node_list, element_list, filename, format_rst, er
     call tr_allocate(Ip_asymm_t,1,index_start+nstep,"Ip_asymm_t",CAT_UNKNOWN)
     Ip_asymm_t = 0.d0
     call HDF5_array1D_reading(file_id,Ip_asymm_t,'Ip_asymm_t')
+
+    if (allocated(oint_Ip_asymm_t)) call tr_deallocate(oint_Ip_asymm_t,"oint_Ip_asymm_t",CAT_UNKNOWN)
+    call tr_allocate(oint_Ip_asymm_t,1,index_start+nstep,"oint_Ip_asymm_t",CAT_UNKNOWN)
+    oint_Ip_asymm_t = 0.d0
+    call HDF5_array1D_reading(file_id,oint_Ip_asymm_t,'oint_Ip_asymm_t')
 
     if (allocated(ref_gauss_Ip_asymm_t)) call tr_deallocate(ref_gauss_Ip_asymm_t,"ref_gauss_Ip_asymm_t",CAT_UNKNOWN)
     call tr_allocate(ref_gauss_Ip_asymm_t,1,index_start+nstep,"ref_gauss_Ip_asymm_t",CAT_UNKNOWN)

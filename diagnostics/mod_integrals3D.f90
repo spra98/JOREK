@@ -90,7 +90,7 @@ real*8  :: eq_g_1D(n_plane,0:n_var,n_gauss), eq_s_1D(n_plane,0:n_var,n_gauss)
 real*8  :: delta_g_1D(n_plane,0:n_var,n_gauss)
 real*8  :: eq_t_1D(n_plane,0:n_var,n_gauss), eq_p_1D(n_plane,0:n_var,n_gauss)
 real*8  :: s_norm_1D(n_plane, n_gauss), stel_current_source_1D(n_plane,n_gauss)
-real*8  :: int_B_plane_v(n_plane), int_B_plane, int_B_elm, B_tan_ms, L_ms, e_par(2), B_pol(2), R1, R2, Z1, Z2
+real*8  :: int_B_plane_v(n_plane), int_B_plane, int_B_elm, B_tan_ms, L_ms, metric_1D, orient, e_par(2), B_pol(2), R1, R2, Z1, Z2
 
 real*8  :: current_source, particle_source, heat_source, heat_source_i, heat_source_e, rotation_source
 real*8  :: xt, t_norm, rho_norm, t_norm2
@@ -110,7 +110,7 @@ real*8  :: I_halo, I_net,TPF, q02, q95, q99
 real*8, allocatable :: qval(:), radav(:)
 
 real*8  :: R_axis,Z_axis,s_axis,t_axis
-real*8  :: current_tot, offset_Ip, offset_ref_gauss_Ip, max_Ip_asymm, max_ref_gauss_Ip_asymm, current_tot_p(n_plane), ref_gauss_current_tot_p(n_plane), beta_p, beta_n, beta_t, aminor, current_MA, current_p_MA(n_plane), current_R_tot
+real*8  :: current_tot, offset_Ip, Ip_oint_mean, max_Ip_oint_asymm, offset_ref_gauss_Ip, max_Ip_asymm, max_ref_gauss_Ip_asymm, current_tot_p(n_plane), ref_gauss_current_tot_p(n_plane), beta_p, beta_n, beta_t, aminor, current_MA, current_p_MA(n_plane), current_R_tot
 real*8  :: xjac, xjac_R, xjac_Z, BigR, wst, P_int, P_e_int, P_i_int, C_intern, zj0, ps0, r0, T0, Te0, Ti0
 real*8  :: Vol, Volume, Area, Bgeo, area1, surface_area 
 real*8  :: psi_as_coord
@@ -1684,13 +1684,13 @@ do m_bndelem = 1, bnd_elm_list%n_bnd_elements
     !     boundary element an s=const or t=const side of the 2D element?
     select case (mv1)
     case (1)
-      sg = s_or_t;  tg = 0.d0;   
+      sg = s_or_t;  tg = 0.d0;  s_const = .false.  
     case (2)
-      sg = 1.d0;    tg = s_or_t; 
+      sg = 1.d0;    tg = s_or_t; s_const = .true.
     case (3)
-      sg = s_or_t;  tg = 1.d0;  
+      sg = s_or_t;  tg = 1.d0;  s_const = .false.
     case (4)
-      sg = 0.d0;    tg = s_or_t; 
+      sg = 0.d0;    tg = s_or_t; s_const = .true.
     end select
 
     do mp=1, n_plane
@@ -1843,7 +1843,7 @@ do m_bndelem = 1, bnd_elm_list%n_bnd_elements
         rhoimp_t = 0.d0
 #endif
 
-      enddo
+      enddo ! end harmonics loop
 
       dTedx  = (   Z_t * Te_s  - Z_s * Te_t  ) / xjac
       dTedy  = ( - R_t * Te_s  + R_s * Te_t  ) / xjac
@@ -1867,8 +1867,7 @@ do m_bndelem = 1, bnd_elm_list%n_bnd_elements
       drhoimpdy = ( - R_t * rhoimp_s + R_s * rhoimp_t ) / xjac
 
       BB2    = (F0*F0 + dpsidx*dpsidx + dpsidy*dpsidy) / BigR**2
-      Bnorm  = (dpsidx * grad_t(1) - dpsidy * grad_t(2)) / BigR   ! normal magnetic field to the JOREK boundary
-
+      Bnorm  = (dpsidx * grad_t(1) - dpsidy * grad_t(2)) / BigR   ! normal magnetic field to the JOREK boundary      
       ! --- get normalized flux 
 #if STELLARATOR_MODEL
       psi_n = s_norm_1D(mp,ms)
@@ -2048,26 +2047,31 @@ do m_bndelem = 1, bnd_elm_list%n_bnd_elements
 enddo !--- bnd elements, end of calculation of boundary fluxes
 
 
-! ! ------- Calculate Ip asymmetry
+! ! ------- Calculate Ip asymmetry via oint B dl
 if (my_id .eq. 0) write(*,*) '***************************'
 if (my_id .eq. 0) write(*,*) '  Computing Ip asymmetry   '
 if (my_id .eq. 0) write(*,*) '***************************'
 
 int_B_plane_v(:) = 0.d0
-x_s_1D(:,:)        = 0.d0
-y_s_1D(:,:)        = 0.d0
 
 ! Save values for each plane
 do mp=1, n_plane
-
+  
+  phi       = 2.d0*PI*float(mp-1)/float(n_plane) / float(n_period)
   int_B_plane = 0.d0
+
   ! BND_ELEM LOOP
   do m_bndelem = 1, bnd_elm_list%n_bnd_elements
-
+    
+    x_s_1D(:,:)        = 0.d0
+    y_s_1D(:,:)        = 0.d0
+    
+    ! Selected boundary element
     bndelem = bnd_elm_list%bnd_element(m_bndelem)
-    elm_k   = element_list%element(bndelem%element)
-    mv1     = bnd_elm_list%bnd_element(m_bndelem)%side
+    ! Selected element index corresponding to the bndelem
     m_elm   = bnd_elm_list%bnd_element(m_bndelem)%element
+    ! Selected side (1,2,3,4) of the originating element where the boundary element is
+    mv1     = bnd_elm_list%bnd_element(m_bndelem)%side
     
     ! Nodes coordinates (for orientation)
     R1 = node_list%node(bndelem%vertex(1))%x(1,1,1)
@@ -2075,23 +2079,8 @@ do mp=1, n_plane
     R2 = node_list%node(bndelem%vertex(2))%x(1,1,1)
     Z2 = node_list%node(bndelem%vertex(2))%x(1,1,2)
 
-    do k_vertex = 1, 2
-      do k_dof = 1, 2
-        k_node      = bndelem%vertex(k_vertex)
-        k_dir       = bndelem%direction(k_vertex,k_dof)
-        k_size      = bndelem%size(k_vertex,k_dof)
-        call make_deep_copy_node(node_list%node(k_node), node_k)
-
-          do in=1,n_coord_tor
-            x_s_1D(mp,:)   = x_s_1D(mp,:)  + node_k%x(in,k_dir,1) * k_size * H1_s(k_vertex,k_dof,:) *HZ_coord(in,mp)
-            y_s_1D(mp,:)   = y_s_1D(mp,:)  + node_k%x(in,k_dir,2) * k_size * H1_s(k_vertex,k_dof,:) *HZ_coord(in,mp)
-          enddo
-    
-      enddo  ! k_dof
-    enddo    ! k_vertex
     int_B_elm = 0.d0
-    psi_s     = 0.d0
-    psi_t     = 0.d0
+
     do ms=1,n_gauss
 
       s_or_t = xgauss(ms) 
@@ -2109,18 +2098,33 @@ do mp=1, n_plane
         sg = 0.d0;    tg = s_or_t; s_const = .true.
       end select
       
-      phi       = 2.d0*PI*float(mp-1)/float(n_plane) / float(n_period)
       call interp_RZP(node_list,element_list,m_elm,sg,tg,phi,R,R_s,R_t,R_phi,R_st,R_ss,R_tt,R_sp,R_tp,R_pp,Z,Z_s,Z_t,Z_phi,Z_st,Z_ss,Z_tt,Z_sp,Z_tp,Z_pp)
       
       BigR   = R
       xjac   = R_s * Z_t - R_t * Z_s
 
       ! --- Tangential vector to the interface
-      if ( s_const ) then
-        e_par = (/ R_t, Z_t /) / sqrt( R_t**2 + Z_t**2 ) * (R_t * (R2-R1) + Z_t * (Z2-Z1))/abs(R_t * (R2-R1) + Z_t * (Z2-Z1))
+
+      ! --- Unnormalized tangent vector 
+      if (s_const) then
+        e_par = (/ R_t, Z_t /)
       else
-        e_par = (/ R_s, Z_s /) / sqrt( R_s**2 + Z_s**2 ) * (R_s * (R2-R1) + Z_s * (Z2-Z1))/abs(R_s * (R2-R1) + Z_s * (Z2-Z1))
-      end if
+        e_par = (/ R_s, Z_s /)
+      endif
+
+      ! Geometrical metric factor
+       metric_1D = sqrt(sum(e_par**2))
+      ! --- Orientation of the boundary element
+      orient = dot_product(e_par, (/ R2-R1, Z2-Z1 /))
+
+      ! --- Normalized and oriented tangential vector
+      e_par = e_par / metric_1D * sign(1.d0, orient)
+
+      ! --- Physical integration weight
+      L_ms = metric_1D * wgauss(ms)
+
+      psi_s     = 0.d0
+      psi_t     = 0.d0
       
       ! ======================== HARMONICS LOOP for psi ============================================== 
       do in = 1,n_tor
@@ -2139,9 +2143,7 @@ do mp=1, n_plane
       B_pol = (/ psi_Z, -psi_R /) / BigR
 
       B_tan_ms = sum(B_pol * e_par)
-      
-      L_ms = sqrt(x_s_1D(mp,ms)**2 + y_s_1D(mp,ms)**2) * wgauss(ms)
-
+    
       int_B_elm = int_B_elm + B_tan_ms * L_ms 
 
     enddo ! do n_gauss
@@ -2153,12 +2155,20 @@ do mp=1, n_plane
 enddo     ! do n_plane
 
 if (my_id .eq. 0) then
-OPEN(UNIT=12, FILE="Ip_asymm.dat", ACTION="write", STATUS="replace")
-DO k = 1,n_plane
-  WRITE(12,*) int_B_plane_v(k)
-END DO
-CLOSE(12)
+  OPEN(UNIT=12, FILE="Ip_asymm.dat", ACTION="write", STATUS="replace")
+  DO k = 1,n_plane
+    WRITE(12,*) int_B_plane_v(k)
+  END DO
+  CLOSE(12)
 endif
+
+! --- Calculate mean value
+
+Ip_oint_mean = sum(int_B_plane_v) / real(n_plane)
+
+max_Ip_oint_asymm = maxval(abs(int_B_plane_v - Ip_oint_mean))
+
+
 ! --- gather contribution from all MPI processes
 #ifndef NOMPIVERSION
 call MPI_AllReduce(D_int,density_in,1,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,ierr)
@@ -2802,6 +2812,9 @@ if (my_id .eq. 0) then
       
       case('Ip_asymm')
         res(iexpr) = max_Ip_asymm
+
+      case('oint_Ip_asymm')
+        res(iexpr) = max_Ip_oint_asymm
       
       case('ref_Ip_asymm') 
         res(iexpr) = max_ref_gauss_Ip_asymm
@@ -3061,6 +3074,7 @@ if (my_id .eq. 0) then
     Ip_tot_t(index_now)              = current_tot
     ref_Ip_tot_t(index_now)          = ref_gauss_current_full
     Ip_asymm_t(index_now)            = max_Ip_asymm
+    oint_Ip_asymm_t(index_now)       = max_Ip_oint_asymm
     ref_gauss_Ip_asymm_t(index_now)  = max_ref_gauss_Ip_asymm
     current_t(index_now)             = current_in 
     Kin_par_tot_t(index_now)         = kin_par_tot
