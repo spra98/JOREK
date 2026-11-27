@@ -121,10 +121,10 @@ real*8  :: r0_corr, T0_corr, Te0_corr, Ti0_corr, dTe0_corr_dT, T_or_Te, T_or_Te_
 real*8  :: density_tot, density_in, density_out,  pressure, pressure_in, pressure_out
 real*8  :: pressure_e, pressure_e_in, pressure_e_out, pressure_i, pressure_i_in, pressure_i_out
 real*8  :: current_in, current_out, D_int, D_ext, P_ext, C_ext, delta_phi, phi, P_tot, D_tot
-real*8  :: current_in_p(n_plane), ref_gauss_current_in_p(n_plane), current_out_p(n_plane), ref_gauss_current_out_p(n_plane), current_R_in_p(n_plane), current_R_out_p(n_plane)
+real*8  :: current_in_p(n_plane), ref_gauss_current_in_p(n_plane), current_out_p(n_plane), ref_gauss_current_out_p(n_plane), ref_gauss_current_full, ref_gauss_current_full_p(n_plane), current_R_in_p(n_plane), current_R_out_p(n_plane)
 real*8  :: C_intern_3d, C_ext_3d, current_R_in, current_R_out, current_R, current_R_p(n_plane), P_e_ext, P_i_ext, P_e_tot, P_i_tot
 real*8  :: C_intern_p(n_plane), C_ext_p(n_plane), C_intern_p_3d(n_plane), C_ext_p_3d(n_plane)
-real*8  :: ref_gauss_C_intern_p(n_plane), ref_gauss_C_ext_p(n_plane), zj_gauss_tilt_in, zj_gauss_tilt_out
+real*8  :: ref_gauss_C_intern_p(n_plane), ref_gauss_C_ext_p(n_plane), ref_gauss_C_full_p(n_plane), ref_gauss_C_full, zj_gauss_tilt_in, zj_gauss_tilt_out, zj_gauss_tilt_full
 real*8  :: VP_int, VP_ext, VK_int, VK_ext, vpar0, Bv2, BB2, VP_tot, VK_tot
 real*8  :: kin_par_in, kin_par_out, kin_par_tot, kin_perp_in, kin_perp_out, kin_perp_tot
 real*8  :: local_mom_par_tot, local_mom_par_int, local_mom_par_ext
@@ -170,6 +170,7 @@ real*8  :: viscopar_flux, viscopar_f, vpar_s, vpar_t, vpar_x, vpar_y, li3_tot, l
 real*8  :: varmin(n_var), varmax(n_var), V_min(n_var), V_max(n_var)
 real*8  :: jgs_J_R_in, jgs_J_Z_in, jgs_J_phi_in, jgs_dJ_R_dt_in, jgs_dJ_Z_dt_in, jgs_dJ_phi_dt_in
 real*8  :: jgs_J_R_out, jgs_J_Z_out, jgs_J_phi_out, jgs_dJ_R_dt_out, jgs_dJ_Z_dt_out, jgs_dJ_phi_dt_out
+real*8  :: jgs_J_R_full, jgs_J_Z_full, jgs_J_phi_full, jgs_dJ_R_dt_full, jgs_dJ_Z_dt_full, jgs_dJ_phi_dt_full
 
 !> for use_ncs
 real*8  :: aux_rho0, aux_T0, aux_Vpar0
@@ -317,6 +318,8 @@ P_i_ext  = 0.d0
 C_ext    = 0.d0
 C_ext_p(:) = 0.d0
 ref_gauss_C_ext_p(:) = 0.d0
+ref_gauss_C_full_p(:) = 0.d0
+ref_gauss_C_full = 0.d0
 C_ext_p_3d(:) = 0.d0
 C_ext_3d = 0.d0
 H_ext    = 0.d0
@@ -436,7 +439,7 @@ Tie_min_neg = 0.5*T_min_neg
 !$omp   shared(element_list,node_list, aux_node_list, H, H_s, H_t, HZ, HZ_p, ife_min, ife_max, xpoint, xcase, &
 !$omp          H_ss, H_tt, H_st, HZ_pp, HZ_coord, HZ_coord_p,                                                 &
 !$omp          R_xpoint, Z_xpoint, my_id, use_pellet, delta_phi, R_axis, Z_axis, psi_axis, psi_bnd,           &
-!$omp          D_tot, D_int, D_Ext, P_tot, P_int, P_ext, Vol, surface_area, C_intern, C_intern_p, ref_gauss_C_intern_p, C_ext, C_ext_p, ref_gauss_C_ext_p,VP_ext, VP_int,  &
+!$omp          D_tot, D_int, D_Ext, P_tot, P_int, P_ext, Vol, surface_area, C_intern, ref_gauss_C_full, C_intern_p, ref_gauss_C_intern_p, C_ext, C_ext_p, ref_gauss_C_ext_p, ref_gauss_C_full_p, VP_ext, VP_int,  &
 !$omp          VK_ext, VK_int, VK_tot, VM_ext, VM_int, VM_tot, J2_tot, J2_ext, J2_int,                        &
 !$omp          H_int, H_ext, S_int, S_ext,psi_xpoint,  F0, VP_tot,eta, T_0, Te_0, T_min,                      &
 !$omp          ne_SI_min, Te_eV_min, rn0_min, P_e_tot, P_i_tot, P_e_int, P_i_int, P_e_ext, P_i_ext,           &
@@ -475,7 +478,7 @@ Tie_min_neg = 0.5*T_min_neg
 !$omp           x_ss, x_tt, x_st, y_ss, y_tt, y_st, eq_ss, eq_tt, eq_st, eq_sp, eq_tp,                        &
 !$omp           eq_spp, eq_tpp, psi_axisym,s_norm, stel_current_source,eq_s_3d, eq_t_3d, wst, BigR,           &
 !$omp           r0, T0, Te0, zj0, ps0, dTdx, dTdy, drhodx, drhody, dpsidx, dpsidy, dpsidp, dudx, dudy,dudp,   &
-!$omp           dpsidx_3d, dpsidy_3d, saw_ene_dens, BB2_zero, zj_gauss_tilt_in, zj_gauss_tilt_out,                                                 &
+!$omp           dpsidx_3d, dpsidy_3d, saw_ene_dens, BB2_zero, zj_gauss_tilt_in, zj_gauss_tilt_out, zj_gauss_tilt_full,  &
 !$omp           w0, dwdx, dwdy, u0_xpp, u0_ypp, visco_T, visco_fact_old, visco_fact_new,                      &
 !$omp           dpdx, dpdy, phi, Ti0, psi_as_coord, vprp_disp,                                                &
 !$omp           source_pellet, source_volume, eq_zne, eq_zTe, vpar0, BB2, chi, Bv2,                           &
@@ -492,6 +495,7 @@ Tie_min_neg = 0.5*T_min_neg
 !$omp           aux_P0, aux_P0_s, aux_P0_t, aux_P0_p, aux_q0, aux_jx0, aux_jy0, aux_jz0, aux_jz0_pcs,         &
 !$omp           jgs_J_R_in, jgs_J_Z_in, jgs_J_phi_in, jgs_dJ_R_dt_in, jgs_dJ_Z_dt_in, jgs_dJ_phi_dt_in,       &
 !$omp           jgs_J_R_out, jgs_J_Z_out, jgs_J_phi_out, jgs_dJ_R_dt_out, jgs_dJ_Z_dt_out, jgs_dJ_phi_dt_out,  &
+!$omp           jgs_J_R_full, jgs_J_Z_full, jgs_J_phi_full, jgs_dJ_R_dt_full, jgs_dJ_Z_dt_full, jgs_dJ_phi_dt_full,  &
 !$omp           eta_T_ohm, rn0, rn0_corr, rimp0, rimp0_corr, Z_eff, lnA, alpha_e,                             &
 #if (defined WITH_Neutrals) || (defined WITH_Impurities)
 !$omp           i_imp, frad_bg, Lrad_imp, Te_corr_eV, Te_eV, ne_SI, Ti_eV,                                    &
@@ -539,8 +543,8 @@ omp_tid      = 0
 !$omp                local_radiation, local_radiation_phi, local_E_ion, local_P_ei, local_P_ion, &
 !$omp                local_source_volume, local_source_volume_drift, local_radiation_bg,      &
 #endif
-!$omp                D_int, D_ext, P_int, H_int, S_int, H_ext, S_ext, P_ext, C_intern, C_ext, &
-!$omp                C_intern_p, ref_gauss_C_intern_p, C_ext_p , ref_gauss_C_ext_p, C_intern_p_3d, C_ext_p_3d,                          &
+!$omp                D_int, D_ext, P_int, H_int, S_int, H_ext, S_ext, P_ext, C_intern, ref_gauss_C_full,C_ext, &
+!$omp                C_intern_p, ref_gauss_C_intern_p, C_ext_p , ref_gauss_C_ext_p, ref_gauss_C_full_p, C_intern_p_3d, C_ext_p_3d,                          &
 !$omp                P_e_int, P_i_int, P_e_ext, P_i_ext, P_e_tot, P_i_tot,                    &
 !$omp                VP_int, VP_ext, VP_tot, VK_tot, VK_int, VK_ext, VM_ext,                  &
 !$omp                VM_int, VM_tot, Vol, surface_area, P_tot, D_tot,J2_tot, J2_int, J2_ext,                &
@@ -1551,8 +1555,15 @@ aux_q0    = 0.d0; aux_jx0   = 0.d0; aux_jy0   = 0.d0; aux_jz0   = 0.d0; aux_jz0_
 
         endif !in or outside LCFS
 
+        ! Calculate jphi_gaussian at the Gauss point
+        call jphi_gaussian_rotated_source(x_g(mp,ms,mt), y_g(mp,ms,mt), phi, jgs_J_R_full, jgs_J_Z_full, jgs_J_phi_full, &
+                                            jgs_dJ_R_dt_full, jgs_dJ_Z_dt_full, jgs_dJ_phi_dt_full)
+        ! Convert to JOREK units
+        zj_gauss_tilt_full     = -  x_g(mp,ms,mt) * jgs_J_phi_full
+        ref_gauss_C_full_p(mp) = ref_gauss_C_full_p(mp) - zj_gauss_tilt_full / BigR * xjac * wst   
+        ref_Gauss_C_full       = ref_gauss_C_full - zj_gauss_tilt_full / BigR * xjac * wst * delta_phi                                  
 
-
+       
         
         BB2_zero = (F0 **2 + (dpsidx - dpsidx_3d) **2 + (dpsidy - dpsidy_3d) **2) / BigR ** 2
         ! SAW energy functional (linear MHD), see the first term of eq. (8.31) in Freidberg's Ideal MHD
@@ -2164,6 +2175,8 @@ call MPI_AllReduce(ref_gauss_C_intern_p,ref_gauss_current_in_p,n_plane,MPI_DOUBL
 call MPI_AllReduce(C_ext,current_out,1,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,ierr)
 call MPI_AllReduce(C_ext_p,current_out_p,n_plane,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,ierr)
 call MPI_AllReduce(ref_gauss_C_ext_p,ref_gauss_current_out_p,n_plane,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,ierr)
+call MPI_AllReduce(ref_gauss_C_full_p, ref_gauss_current_full_p,n_plane,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,ierr )
+call MPI_AllReduce(ref_gauss_C_full, ref_gauss_current_full,1,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,ierr )
 call MPI_AllReduce(C_intern_3d,current_R_in,1,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,ierr)
 call MPI_AllReduce(C_intern_p_3d,current_R_in_p,n_plane,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,ierr)
 call MPI_AllReduce(C_ext_3d,current_R_out,1,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,ierr)
@@ -2244,6 +2257,8 @@ ref_gauss_current_in_p = ref_gauss_C_intern_p
 current_out          = C_ext
 current_out_p        = C_ext_p
 ref_gauss_current_out_p = ref_gauss_C_ext_p
+ref_gauss_current_full_p = ref_gauss_C_full_p
+ref_gauss_current_full   = ref_gauss_C_full
 current_R_in         = C_intern_3d
 current_R_in_p       = C_intern_p_3d
 current_R_out        = C_ext_3d
@@ -2382,6 +2397,8 @@ current_in_p         = n_period * current_in_p * fact_mu0
 ref_gauss_current_in_p = n_period * ref_gauss_current_in_p * fact_mu0
 current_out_p        = n_period * current_out_p * fact_mu0 
 ref_gauss_current_out_p = n_period * ref_gauss_current_out_p * fact_mu0
+ref_gauss_current_full_p = n_period * ref_gauss_current_full_p * fact_mu0
+ref_gauss_current_full   = n_period * ref_gauss_current_full * fact_mu0 / (2.d0 * PI)
 current_R_in_p       = n_period * current_R_in_p * fact_mu0 / (2.d0 * PI)
 current_R_out_p      = n_period * current_R_out_p * fact_mu0 / (2.d0 * PI)
 R2curr               = n_period * R2curr      * fact_mu0  / (2.d0 * PI)
@@ -2513,6 +2530,12 @@ if (my_id .eq. 0) then
   enddo 
   close(32)
 
+  open(32, file='ref_gauss_current_full_p.dat', status='replace' , action='write')
+  do i = 1, n_plane 
+    write(32,*) ref_gauss_current_full_p(i) 
+  enddo 
+  close(32)
+
 endif
 
 ! ============== PLASMA CURRENT ASYMMETRY =================================
@@ -2520,8 +2543,8 @@ endif
 offset_Ip = sum(current_tot_p) / real(n_plane)
 max_Ip_asymm = maxval(abs(current_tot_p(:) - offset_Ip))
 
-offset_ref_gauss_Ip = sum(ref_gauss_current_tot_p) / real(n_plane)
-max_ref_gauss_Ip_asymm = maxval(abs(ref_gauss_current_tot_p(:) - offset_ref_gauss_Ip))
+offset_ref_gauss_Ip = sum(ref_gauss_current_full_p) / real(n_plane)
+max_ref_gauss_Ip_asymm = maxval(abs(ref_gauss_current_full_p(:) - offset_ref_gauss_Ip))
 
 ! --- Externally calculated quantities
 ! --- Halo currents
@@ -2773,6 +2796,15 @@ if (my_id .eq. 0) then
 
       case ( 'Ip_out' )
         res(iexpr) = current_out 
+
+      case('ref_Ip_tot')
+        res(iexpr) = ref_gauss_current_full
+      
+      case('Ip_asymm')
+        res(iexpr) = max_Ip_asymm
+      
+      case('ref_Ip_asymm') 
+        res(iexpr) = max_ref_gauss_Ip_asymm
 
       case ( 'int3d_jR_tot' )
         res(iexpr) = current_R_tot 
@@ -3026,7 +3058,8 @@ if (my_id .eq. 0) then
     Thermal_e_tot_t(index_now)       = pressure_e
     Thermal_i_tot_t(index_now)       = pressure_i
     Helicity_tot_t(index_now)        = helicity_tot
-    Ip_tot_t(index_now)              = current_tot 
+    Ip_tot_t(index_now)              = current_tot
+    ref_Ip_tot_t(index_now)          = ref_gauss_current_full
     Ip_asymm_t(index_now)            = max_Ip_asymm
     ref_gauss_Ip_asymm_t(index_now)  = max_ref_gauss_Ip_asymm
     current_t(index_now)             = current_in 
